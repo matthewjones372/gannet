@@ -144,6 +144,11 @@ final class Ring {
         queued++;
     }
 
+    /** Whether submissions are queued that the kernel has not yet been given. */
+    boolean hasQueued() {
+        return queued > 0;
+    }
+
     /** Sends what is queued and processes completions, waiting for at least one when [wait]. */
     void enter(boolean wait) {
         INT.setRelease(sq, sqTail, tail);

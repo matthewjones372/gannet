@@ -1,6 +1,7 @@
 package io.github.matthewjones372.gannet.runtime
 
 import io.github.matthewjones372.gannet.MalformedBodyException
+import java.io.IOException
 
 /**
  * A connection's input: what has been read and not yet consumed, in [buf] from [start] to [end], and the reads that
@@ -16,6 +17,9 @@ internal abstract class Inbound(private val lent: ByteArray) {
 
     /** The trailer fields of a chunked body are held to this, as a head is. */
     abstract val maxHeaderBytes: Int
+
+    /** Unread bytes past which more input closes the connection rather than growing the buffer. */
+    protected open val maxBuffered: Int get() = Int.MAX_VALUE
 
     /** True when nothing more will be read for a new request: the stream ended, or the server is stopping. */
     protected abstract val ending: Boolean
@@ -97,6 +101,7 @@ internal abstract class Inbound(private val lent: ByteArray) {
                 end -= start
                 start = 0
             } else {
+                if (end >= maxBuffered) throw IOException("A connection held more than $maxBuffered unread bytes")
                 buf = buf.copyOf(buf.size * 2).also { own = it }
             }
         }

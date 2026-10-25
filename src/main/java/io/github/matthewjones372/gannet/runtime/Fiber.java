@@ -59,9 +59,15 @@ final class Fiber {
     /** The send in flight is from its carrier's send ring, not [out]. */
     boolean ringSend;
     boolean waitingSend;
+    /** While [waitingSend]: the fiber is woken once no more than this many written bytes are unsent. */
+    int sendWaitLimit;
     long sendAddress;
     int sendLeft;
     int sendError;
+    /** Bytes the kernel has taken from this fiber's sends, so the carrier's timer can tell a stalled reader. */
+    long sentBytes;
+    /** Accepted with TLS still to set up: counted in its carrier's handshakes until [Carrier#endHandshake]. */
+    boolean handshaking;
 
     Fiber(int id, Runnable body) {
         this.id = id;

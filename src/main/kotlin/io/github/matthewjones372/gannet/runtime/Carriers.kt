@@ -10,6 +10,7 @@ import java.nio.ByteBuffer
 import java.time.Duration
 import java.util.concurrent.CompletionException
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 /** A server's carriers: started together on one port, stopped and joined together. */
 internal class Carriers private constructor(
@@ -35,11 +36,14 @@ internal class Carriers private constructor(
             val port = Sys.localPort(listeners.first())
             val settings = Carrier.Settings(
                 config.ringEntries, config.completionEntries, config.bufferCount, config.bufferSize, config.fixedFiles,
-                config.tick.toNanos(), config.heldBuffers,
+                config.tick.toNanos(), config.heldBuffers, config.maxConnections,
+                // Only TLS connections have a handshake worth capping.
+                if (config.tls != null) config.maxHandshakes else Int.MAX_VALUE,
             )
+            val open = AtomicInteger()
             val threads = listeners.mapIndexed { i, listener ->
                 val shared = Shared(config, handler)
-                Carrier("gannet-$port-$i", listener, settings) { fd -> Connection(fd, shared).run() }
+                Carrier("gannet-$port-$i", listener, settings, open) { fd -> Connection(fd, shared).run() }
             }
             threads.forEach { it.start() }
             val failure = threads.firstNotNullOfOrNull { failureOf(it) }
