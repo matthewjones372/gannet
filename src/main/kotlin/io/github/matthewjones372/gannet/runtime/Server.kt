@@ -105,7 +105,7 @@ internal class Connection(private val fd: Int, private val shared: Shared) : Ses
             // The peer went away, a limit was hit or the server stopped: nothing is left to tell anyone, and nothing
             // queued is worth waiting for, so a send still in flight is failed rather than waited out.
             out.size = 0
-            Io.shutdown(carrier, fiber)
+            Io.shutdownAndWait()
         } finally {
             closed = true
             exchange = null

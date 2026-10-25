@@ -207,6 +207,20 @@ final class Io {
         f.outstanding++;
     }
 
+    /**
+     * Shuts the current fiber's connection down and parks until that is done, failing a send still in flight. Waited
+     * for because the ring runs a shutdown on a worker: one left in flight could land after the close that follows,
+     * on whichever connection has taken the same descriptor since.
+     */
+    static void shutdownAndWait() {
+        Carrier c = Carrier.current();
+        Fiber f = c.current;
+        if (f.fd < 0 || f.zombie) return;
+        c.ring.prep(Ring.OP_SHUTDOWN, c.fileFlag, 0, f.fd, 0L, 0L, SHUT_RDWR, 0, 0, 0, Carrier.WAKE | f.id);
+        f.outstanding++;
+        Fiber.park();
+    }
+
     /** Closes [fd] through the ring without waiting: a direct descriptor has no number the close system call knows. */
     static void closeNow(int fd) {
         Carrier c = Carrier.current();
