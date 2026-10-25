@@ -24,8 +24,9 @@ import javax.management.ObjectName
 
 /**
  * The server side of the soak, run in a JVM of its own so it can be pinned to cores apart from the load and so what
- * it holds is all the server's. It starts three servers (plain, TLS, and a plain one with a small connection cap),
- * prints `READY`, and then answers the driver's commands on stdin, one line each:
+ * it holds is all the server's. It starts five servers: plain and TLS ones with generous limits for well-behaved
+ * clients, plain and TLS ones with tight limits for the clients that trip them, and one with a small connection cap.
+ * It prints `READY`, and then answers the driver's commands on stdin, one line each:
  *
  * - `sample`: runs a full GC and prints one `SAMPLE` line of `key=value` pairs: heap after GC, direct and native
  *   memory, threads, descriptors, mappings, each server's connections, fibers and buffers, and what the handlers and
@@ -78,24 +79,29 @@ internal class SoakServer(engine: GannetEngine, carriers: Int, keyStore: Path) {
         fdTargetsBeforeStart = Proc.fdTargets()
         threadsBeforeStart = ManagementFactory.getThreadMXBean().threadCount
         val handler = HttpHandler { handle(it) }
+        // The well-behaved clients get servers with generous limits: a load generator short of cpu can stall one of
+        // them for seconds, and a tight timeout would then cut off a client that did nothing wrong. The clients the
+        // limits are for get servers of their own, with limits tight enough to trip in seconds.
+        val generous = base.copy(
+            idleTimeout = Duration.ofSeconds(GENEROUS_SECONDS),
+            headTimeout = Duration.ofSeconds(GENEROUS_SECONDS),
+            bodyTimeout = Duration.ofSeconds(GENEROUS_SECONDS),
+            writeTimeout = Duration.ofSeconds(GENEROUS_SECONDS),
+            handshakeTimeout = Duration.ofSeconds(GENEROUS_SECONDS),
+        )
         servers = linkedMapOf(
-            "main" to GannetServer.start(base, handler),
-            "tls" to GannetServer.start(
-                base.copy(tls = tls, maxHandshakes = TLS_HANDSHAKES),
-                handler,
-            ),
-            // Idle connections held at the cap must outlast a load generator starved of cpu for a few seconds.
-            "cap" to GannetServer.start(
-                base.copy(maxConnections = CAP, idleTimeout = Duration.ofSeconds(CAP_IDLE_SECONDS)),
-                handler,
-            ),
+            "main" to GannetServer.start(generous, handler),
+            "limits" to GannetServer.start(base, handler),
+            "tls" to GannetServer.start(generous.copy(tls = tls, maxHandshakes = TLS_HANDSHAKES), handler),
+            "tls-limits" to GannetServer.start(base.copy(tls = tls, maxHandshakes = TLS_HANDSHAKES), handler),
+            "cap" to GannetServer.start(generous.copy(maxConnections = CAP), handler),
         )
     }
 
     fun run() {
         val engine = servers.getValue("main").engine
         val ports = servers.entries.joinToString(" ") { (name, server) -> "$name=${server.port}" }
-        println("READY engine=$engine cap=$CAP head=$LIMIT_SECONDS idle=$IDLE_SECONDS $ports")
+        println("READY engine=$engine capLimit=$CAP head=$LIMIT_SECONDS idle=$IDLE_SECONDS $ports")
         while (true) {
             when (readlnOrNull()?.trim()) {
                 null, "stop" -> return stop()
@@ -308,7 +314,7 @@ internal class SoakServer(engine: GannetEngine, carriers: Int, keyStore: Path) {
     companion object {
         const val LOGGER = "io.github.matthewjones372.gannet"
         const val CAP = 32
-        private const val CAP_IDLE_SECONDS = 120L
+        private const val GENEROUS_SECONDS = 120L
         const val LIMIT_SECONDS = 2L
         const val IDLE_SECONDS = 5L
         const val MAX_BODY = 8L shl 20

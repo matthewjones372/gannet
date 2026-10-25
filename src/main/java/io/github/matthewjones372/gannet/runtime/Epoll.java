@@ -235,7 +235,7 @@ final class Epoll extends Engine {
 
     @Override
     int waiting() {
-        return waiting.size();
+        return waiting.size() + queued;
     }
 
     @Override

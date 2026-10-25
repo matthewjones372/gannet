@@ -37,6 +37,8 @@ class StatsTest {
         last.handshakes shouldBe 0
         last.freeBuffers shouldBe last.buffers
         last.fibers shouldBe carriers
+        // Each idle epoll carrier holds its acceptor's accept, its eventfd read and its tick; io_uring says -1.
+        last.engineWaiting shouldBe if (server.engine == GannetEngine.EPOLL) carriers * IDLE_OPS else -carriers
     }
 
     @Test
@@ -95,5 +97,6 @@ class StatsTest {
         const val PIECE = 16 * 1024
         const val BIG_BODY = 200_000
         const val JUNK = 300
+        const val IDLE_OPS = 3
     }
 }

@@ -17,7 +17,9 @@ import javax.net.ssl.SSLSocket
 /** Where the load goes, and the server's limits it trips on purpose. */
 internal class Target(
     val main: Int,
+    val limits: Int,
     val tls: Int,
+    val tlsLimits: Int,
     val cap: Int,
     val capLimit: Int,
     val limitSeconds: Long,
@@ -358,7 +360,7 @@ private class Scenarios(private val t: Target) {
     // ------------------------------------------------------------------ clients the limits are for
 
     /** A head sent a byte at a time, each well inside the idle timeout: the head timeout must cut it off. */
-    private fun slowHead(w: Worker) = w.using(w.open(t.main)) { conn ->
+    private fun slowHead(w: Worker) = w.using(w.open(t.limits)) { conn ->
         conn.socket.soTimeout = 1
         conn.send("GET /hello HTTP/1.1\r\nHost: soak\r\nX-Slow: ")
         val start = System.nanoTime()
@@ -393,7 +395,7 @@ private class Scenarios(private val t: Target) {
     }
 
     /** A body that stops arriving: the body timeout must end it. */
-    private fun slowBody(w: Worker) = w.using(w.open(t.main, timeoutMillis = (limitMillis + SLACK_MILLIS).toInt())) {
+    private fun slowBody(w: Worker) = w.using(w.open(t.limits, timeoutMillis = (limitMillis + SLACK_MILLIS).toInt())) {
         val path = if (w.chance(50)) "/echo" else "/sink"
         val chunked = w.chance(50)
         if (chunked) {
@@ -425,7 +427,7 @@ private class Scenarios(private val t: Target) {
     }
 
     /** A client that asks for 32 MiB and reads none of it: the write timeout must end it. */
-    private fun slowReader(w: Worker) = w.using(w.open(t.main, receiveBuffer = 4096)) { conn ->
+    private fun slowReader(w: Worker) = w.using(w.open(t.limits, receiveBuffer = 4096)) { conn ->
         val total = 2048L * 16384
         val off = if (w.chance(25)) "&off=1" else ""
         conn.send("GET /stream?pieces=2048&size=16384$off HTTP/1.1\r\nHost: soak\r\n\r\n")
@@ -444,7 +446,7 @@ private class Scenarios(private val t: Target) {
 
     /** A connection that sends nothing, or nothing after one request: the idle timeout must close it. */
     private fun idle(w: Worker) =
-        w.using(w.open(t.main, timeoutMillis = (idleMillis + SLACK_MILLIS).toInt())) { conn ->
+        w.using(w.open(t.limits, timeoutMillis = (idleMillis + SLACK_MILLIS).toInt())) { conn ->
             if (w.chance(50)) hello(w, conn)
             val start = System.nanoTime()
             try {
@@ -460,7 +462,7 @@ private class Scenarios(private val t: Target) {
 
     /** Connections that go away mid-request (head, body, chunked body, or before the reply), some with a reset. */
     private fun drops(w: Worker) {
-        val conn = w.open(t.main)
+        val conn = w.open(t.limits)
         val reset = w.chance(50)
         try {
             when (w.between(0, 6)) {
@@ -488,7 +490,7 @@ private class Scenarios(private val t: Target) {
     /** One malformed request: the status it must get, and the connection must close after it. */
     private fun malformed(w: Worker) {
         val (request, status) = MALFORMED[w.between(0, MALFORMED.size)]
-        w.using(w.open(t.main)) { conn ->
+        w.using(w.open(t.limits)) { conn ->
             w.timed {
                 conn.send(request)
                 val reply = conn.read()
@@ -537,7 +539,7 @@ private class Scenarios(private val t: Target) {
     /** Handshakes given up on: before a byte, after garbage, after a ClientHello, or left to the handshake timeout. */
     private fun tlsAbandon(w: Worker) {
         val kind = w.between(0, 4)
-        val conn = w.open(t.tls, timeoutMillis = (limitMillis + SLACK_MILLIS).toInt())
+        val conn = w.open(t.tlsLimits, timeoutMillis = (limitMillis + SLACK_MILLIS).toInt())
         var reset = w.chance(50)
         try {
             w.timed {
@@ -568,7 +570,7 @@ private class Scenarios(private val t: Target) {
 
     /** Sends a real ClientHello and reads the start of the server's answer, then gives up. */
     private fun clientHello(w: Worker, conn: Conn) {
-        val engine = t.client.createSSLEngine("127.0.0.1", t.tls).apply { useClientMode = true }
+        val engine = t.client.createSSLEngine("127.0.0.1", t.tlsLimits).apply { useClientMode = true }
         engine.beginHandshake()
         val net = ByteBuffer.allocate(engine.session.packetBufferSize)
         engine.wrap(ByteBuffer.allocate(0), net)

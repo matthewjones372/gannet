@@ -147,7 +147,7 @@ tasks.register<JavaExec>("soak") {
     jvmArgs("-Xmx1g")
     val names = listOf(
         "minutes", "engines", "intervalSeconds", "warmupSeconds", "graceSeconds", "serverCpus", "loadCpus",
-        "carriers", "heapSlope", "directSlope", "scenarios",
+        "carriers", "heapSlope", "scenarios",
     )
     names.forEach { name ->
         providers.gradleProperty("soak${name.replaceFirstChar { it.uppercase() }}").orNull?.let {

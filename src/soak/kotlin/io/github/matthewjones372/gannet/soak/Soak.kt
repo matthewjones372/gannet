@@ -47,7 +47,6 @@ internal class Settings(
     val loadCpus: String?,
     val carriers: Int,
     val heapSlopeLimit: Double,
-    val directSlopeLimit: Double,
     val out: Path,
     val scenarios: Set<String>?,
 ) {
@@ -87,7 +86,6 @@ internal class Settings(
                 loadCpus = loadCpus,
                 carriers = long("carriers", serverCpus?.let { cpuCount(it) }?.toLong() ?: 2L).toInt(),
                 heapSlopeLimit = double("heapSlope", DEFAULT_SLOPE),
-                directSlopeLimit = double("directSlope", DEFAULT_SLOPE),
                 out = Path.of(prop("out") ?: "build/soak"),
                 scenarios = prop("scenarios")?.split(',')?.map { it.trim() }?.toSet(),
             )
@@ -265,7 +263,9 @@ private class Run(private val engine: String, private val settings: Settings, pr
                 .associate { it.substringBefore('=') to it.substringAfter('=') }
             val target = Target(
                 main = fields.getValue("main").toInt(),
+                limits = fields.getValue("limits").toInt(),
                 tls = fields.getValue("tls").toInt(),
+                tlsLimits = fields.getValue("tls-limits").toInt(),
                 cap = fields.getValue("cap").toInt(),
                 capLimit = SoakServer.CAP,
                 limitSeconds = fields.getValue("head").toLong(),
@@ -419,7 +419,14 @@ private class Run(private val engine: String, private val settings: Settings, pr
             }
         }
         checks += slope("heap after GC", "heap", settings.heapSlopeLimit)
-        checks += slope("direct memory", "direct", settings.directSlopeLimit)
+        // Direct memory under load is mostly the send buffers of connections open at that moment, too noisy to fit a
+        // line to; once they have all closed, it must be back where it was.
+        checks += Check(
+            "direct memory back to baseline",
+            settled["direct"] <= baseline["direct"] + DIRECT_SLACK,
+            "baseline ${fmt(baseline.mb("direct"))} MB, after ${fmt(settled.mb("direct"))} MB " +
+                "(${baseline["directCount"]} -> ${settled["directCount"]} buffers)",
+        )
         checks += latency()
         val unexpected = load.scenarios.sumOf { it.stats.unexpected.get() }
         val serverErrors = load.scenarios.sumOf { it.stats.serverErrors.get() }
@@ -618,7 +625,7 @@ private class Run(private val engine: String, private val settings: Settings, pr
     }
 
     private companion object {
-        val SERVERS = listOf("main", "tls", "cap")
+        val SERVERS = listOf("main", "limits", "tls", "tls-limits", "cap")
         const val READY_SECONDS = 120L
         const val STOP_WAIT_MILLIS = 30_000L
         const val QUIESCE_POLL_MILLIS = 2_000L
@@ -636,6 +643,7 @@ private class Run(private val engine: String, private val settings: Settings, pr
         const val P99_SLACK_MICROS = 5_000
         const val ERRORS_SHOWN = 5
         const val SLOPE_DIGITS = 4
+        const val DIRECT_SLACK = 1L shl 20
     }
 }
 

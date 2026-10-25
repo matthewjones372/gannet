@@ -48,7 +48,10 @@ abstract class Engine {
     /** A sparse table of [count] direct descriptors; false where there is none to have. */
     abstract boolean registerFiles(int count);
 
-    /** Operations held waiting in user space, for the soak to see none is forgotten; -1 where the kernel holds them. */
+    /**
+     * Operations held in user space, queued or waiting on their descriptor, for the soak to see none is forgotten; -1
+     * where the kernel holds them.
+     */
     int waiting() {
         return -1;
     }

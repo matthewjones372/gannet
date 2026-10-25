@@ -192,22 +192,24 @@ which is what CI does. CI also runs `test` inside Docker's default seccomp profi
 ./gradlew soak -PsoakMinutes=20
 ```
 
-`soak` is not part of `build` (`check` only compiles it). It starts a server in a JVM of its own and, for the given
-minutes on each engine (`-PsoakEngines=IO_URING,EPOLL` by default), drives a mixed load against it from the Gradle JVM:
-keep-alive GETs, Content-Length and chunked POSTs up to 4 MiB, pipelined batches, streamed replies (some written from
-another thread, a fifth abandoned midway), clients that trip the head, body, write and idle timeouts, connections
-dropped mid-request, malformed requests, TLS requests, full and abandoned handshakes, connection churn, and a server
-with a cap of 32 connections filled past it. On a machine of four cores or more the server and the load are pinned
-(`taskset`) to separate halves of them; `-PsoakServerCpus=0-1 -PsoakLoadCpus=2-3` says which.
+`soak` is not part of `build` (`check` only compiles and lints it). It starts the servers in a JVM of their own and, for
+the given minutes on each engine (`-PsoakEngines=IO_URING,EPOLL` by default), drives a mixed load against them from a
+second JVM: keep-alive GETs, Content-Length and chunked POSTs up to 4 MiB, pipelined batches, streamed replies (some
+written from another thread, a fifth abandoned midway), clients that trip the head, body, write and idle timeouts,
+connections dropped mid-request, malformed requests, TLS requests, full and abandoned handshakes, connection churn, and
+a server with a cap of 32 connections filled past it. The clients meant to trip a limit go to servers whose limits are 2
+and 5 seconds, the rest to servers whose limits are generous, so a load generator short of cpu never trips one by
+accident. On a machine of four cores or more the servers and the load are pinned (`taskset`) to separate halves of them;
+`-PsoakServerCpus=0-1 -PsoakLoadCpus=2-3` says which.
 
 Every interval it records, from the server's JVM, live heap after a full GC, direct and native memory (NMT), RSS and
 mappings, threads, open descriptors, and each server's open connections, fibers and free receive buffers (an internal
 hook, not API), and from the load, throughput and latency percentiles per scenario, with the machine's load average
-and per-core busy time. After the load stops and the server settles, it fails unless descriptors and threads are back
-to the post-warm-up baseline, every connection is closed and every buffer returned, the live heap's least-squares
-slope over the steady state (the run after its first fifth) is below 0.25 MB/min (`-PsoakHeapSlope`), the last
-interval's GET p50 and p99 are within 1.5x + 0.5 ms and 2x + 5 ms of the first's, and no request failed for a reason
-that is the server's fault, no 5xx was answered and the server logged no warning. `build/soak/<engine>/` holds
+and per-core busy time. After the load stops and the server settles, it fails unless descriptors, threads and direct
+memory are back to the post-warm-up baseline, every connection is closed and every buffer returned, the live heap's
+least-squares slope over the steady state (the run after its first fifth) is below 0.25 MB/min (`-PsoakHeapSlope`),
+the last interval's GET p50 and p99 are within 1.5x + 0.5 ms and 2x + 5 ms of the first's, and no request failed for
+a reason that is the server's fault, no 5xx was answered and the server logged no warning. `build/soak/<engine>/` holds
 `samples.csv`, `summary.txt` (series, checks) and `server.log` (class histograms at the baseline and the end).
 
 The `soak` workflow runs it by hand (`workflow_dispatch`, 20 minutes per engine by default) and weekly.
