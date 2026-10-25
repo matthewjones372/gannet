@@ -1,0 +1,8 @@
+build/
+.gradle/
+.kotlin/
+*.log
+.idea/
+*.iml
+local.properties
+.claude/worktrees/

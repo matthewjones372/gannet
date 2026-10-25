@@ -1,0 +1,106 @@
+# Formatting rules for the repo. Spotless reads this file for its ktlint step,
+# and so does IntelliJ, so the editor and the build agree without anyone having
+# to remember a setting.
+#
+# The disabled rules below are not a wish list of things to switch back on.
+# Each was measured against the codebase: left enabled it rewrites working,
+# deliberately laid-out code into a different house style, and the result reads
+# worse every time. A formatter is here to settle whitespace arguments, not to
+# relitigate the shape of the source.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{kt,kts}]
+indent_style = space
+indent_size = 4
+
+# `intellij_idea`, not `ktlint_official`. gradle.properties already declares
+# `kotlin.code.style=official`, and this is the ktlint style that matches it.
+ktlint_code_style = intellij_idea
+
+# Hand-written source here is already inside 120. The default of 100 would
+# rewrap prose-heavy KDoc and long descriptive strings for no benefit.
+max_line_length = 120
+
+# The codebase already writes trailing commas, on declarations and at call
+# sites both. Say so explicitly: `intellij_idea` defaults these to false, which
+# has ktlint strip every one of them — 33 extra files' worth of diff.
+ij_kotlin_allow_trailing_comma = true
+ij_kotlin_allow_trailing_comma_on_call_site = true
+
+# No wildcard imports, anywhere — a project principle (maintainer, 2026-08-26).
+# An explicit import list is the one place a reader sees where every name in
+# the file comes from, and it is what keeps the documentation's examples
+# honest: each one names exactly what it needs. Generated sources are the
+# exception, and they are excluded from formatting rather than from the rule.
+# IntelliJ is told the same thing, so an optimize-imports never puts one back.
+ij_kotlin_name_count_to_use_star_import = 2147483647
+ij_kotlin_name_count_to_use_star_import_for_members = 2147483647
+
+# Assignment and trailing-comment alignment is used on purpose — see the input
+# declarations in example/src/main/kotlin/example/readme/ReadmeExample.kt,
+# which is pasted verbatim into README.md. Collapsing the columns makes that
+# block harder to read and silently desyncs it from the front page.
+ktlint_standard_no-multi-spaces = disabled
+
+# The same file labels each handler lambda with the types its parameters were
+# decoded to, in a comment off the right of the arrow:
+#
+#     listBookmarks streamedNow { (max, tag) ->      // max: Int, tag: Slug?
+#
+# That column is the point of the block — it shows what the endpoint
+# description bought you. This rule moves the comment down onto its own line.
+ktlint_standard_function-literal = disabled
+
+# A formatter that demands a file rename is not a formatter. ResponseHeaders.kt
+# holds ResponseHeader plus the declarations that go with it, which is the name
+# a reader wants.
+ktlint_standard_filename = disabled
+
+# These four each re-wrap code that is already wrapped, by hand, to say exactly
+# the same thing: signatures broken across lines get pulled back onto one,
+# expression bodies get pushed onto a line of their own, and every `->`
+# followed by a call chain grows a line break. Left on they rewrite most of the
+# repo, and none of it reads better afterwards.
+ktlint_standard_function-signature = disabled
+ktlint_standard_class-signature = disabled
+ktlint_standard_function-expression-body = disabled
+ktlint_standard_multiline-expression-wrapping = disabled
+
+# The `endpoint(a, b, c, ...)` overloads in pelican-core group the parameter
+# keys on one line and the trailing `block` on the next, so the six arities
+# read as a table. One parameter per line makes that 40 lines of the same
+# thing, and the grouping is the part worth seeing.
+ktlint_standard_parameter-list-wrapping = disabled
+ktlint_standard_argument-list-wrapping = disabled
+
+# `if (cond) valueA` / `else valueB` as a two-line expression is used
+# throughout, and it is the readable form when the `if` produces a value.
+# Bracing it costs three lines each time and reads as a statement instead.
+ktlint_standard_multiline-if-else = disabled
+
+# One-line block bodies are used as a table: the `infix fun String.to(...)`
+# overloads in JsonValue.kt and the `override fun write(sb) { ... }` bodies
+# beside them. Exploding each into three lines turns a block you take in at a
+# glance into a page you scroll.
+ktlint_standard_statement-wrapping = disabled
+
+# `MediaTypes.customBinary(main, sub, /* compressible = */ true)` — labelling a
+# bare positional boolean at the call site is worth more than the rule that
+# forbids a block comment in that position.
+ktlint_standard_comment-wrapping = disabled
+ktlint_standard_discouraged-comment-location = disabled
+
+# New in ktlint 1.8, and it disagrees with how this repository explains itself.
+# Every backend's Handlers.kt opens with a KDoc block about the *file* — what
+# the typed bridge is for, why streaming binders live there — and so does the
+# module description block in build.gradle.kts. ktlint calls that a "dangling
+# toplevel KDoc" and wants it turned into a line comment or attached to a
+# declaration. Attaching it to the first function would say the paragraph is
+# about that function, which it is not.
+ktlint_standard_kdoc = disabled

@@ -1,0 +1,139 @@
+# detekt, layered on top of its default rule set (`buildUponDefaultConfig`).
+# Only the deviations are written here, so this file reads as a list of
+# decisions rather than a copy of somebody else's defaults. The rules are the
+# ones Pelican builds with, so code moves between the two without a restyle.
+#
+# detekt 2 fails the build on any finding; there is no allowance to configure.
+#
+# .editorconfig turns off the ktlint rules for wildcard imports and for
+# filenames, with the reasoning beside them. They are turned off here too
+# rather than fought twice.
+#
+# detekt reads Kotlin only. The Java core under src/main/java gets Spotless's
+# whitespace rules and nothing else.
+
+comments:
+  active: true
+  UndocumentedPublicClass:
+    active: false        # KDoc is prose here; the README carries the long form.
+  UndocumentedPublicFunction:
+    active: false
+
+complexity:
+  LongParameterList:
+    active: false
+  TooManyFunctions:
+    allowedFunctionsPerFile: 19
+    allowedFunctionsPerClass: 19
+    ignorePrivate: true
+    ignoreOverridden: true
+    ignoreDeprecated: true
+  CyclomaticComplexMethod:
+    allowedComplexity: 11
+    # A `when` over a sealed hierarchy is one decision written out in full, and
+    # the compiler checks it is complete. The branches of a simple dispatch
+    # count once.
+    ignoreSimpleWhenEntries: true
+  LongMethod:
+    active: false
+  NestedBlockDepth:
+    allowedDepth: 4
+
+exceptions:
+  TooGenericExceptionCaught:
+    # A server's last line of defence catches Throwable on purpose: a handler
+    # that throws is answered with a 500 and logged, and the carrier lives.
+    excludes: ['**/Server.kt']
+  SwallowedException:
+    excludes: ['**/test/**']
+
+naming:
+  MatchingDeclarationName:
+    # See .editorconfig: a file is named for what a reader looks for in it.
+    active: false
+  FunctionNaming:
+    # Test names are sentences in backticks.
+    excludes: ['**/test/**']
+
+style:
+  AbstractClassCanBeInterface:
+    active: false
+  UnusedImport:
+    # The other half of the no-wildcard rule: an explicit import list is only
+    # an inventory of what a file uses if the names it no longer uses are gone.
+    active: true
+  WildcardImport:
+    # An explicit import list is the one place a reader sees where every name
+    # in a file comes from.
+    active: true
+  MagicNumber:
+    # A status code in a test is the assertion, not a number needing a name.
+    excludes: ['**/test/**']
+    ignorePropertyDeclaration: true
+    ignoreCompanionObjectPropertyDeclaration: true
+    ignoreNamedArgument: true
+    # HTTP status codes are a vocabulary rather than magic: RFC 9110 gives 404
+    # its meaning, and the API takes a status as an integer.
+    ignoreNumbers: ['-1', '0', '1', '2', '100', '200', '201', '202', '203', '204', '205', '206', '301', '302',
+                    '304', '400', '401', '402', '403', '404', '405', '406', '408', '409', '410', '412', '413',
+                    '415', '422', '423', '428', '429', '451', '500', '501', '502', '503', '504']
+  ReturnCount:
+    max: 4
+    excludeGuardClauses: true
+  ThrowsCount:
+    max: 3
+  MaxLineLength:
+    maxLineLength: 120
+  ForbiddenComment:
+    active: true
+    comments:
+      - reason: 'Unfinished work does not belong on main.'
+        value: 'TODO:'
+      - reason: 'Unfinished work does not belong on main.'
+        value: 'FIXME:'
+  UnusedParameter:
+    # `@ParameterizedTest(name = "{0}")` takes the case's label as its first
+    # parameter and uses it for the test name, not in the body.
+    excludes: ['**/test/**']
+  DestructuringDeclarationWithTooManyEntries:
+    maxDestructuringEntries: 6
+
+  # ---------------------------------------------------------------- functional
+  #
+  # Off in detekt's defaults and on here: a value once bound stays bound, a
+  # function is an expression, and a lambda is not a place to hide a loop.
+  ExpressionBodySyntax:
+    active: true
+    includeLineWrapping: false
+  VarCouldBeVal:
+    active: true
+    ignoreLateinitVar: false
+  UnnecessaryLet:
+    active: true
+  UnnecessaryApply:
+    active: true
+  UnnecessaryFilter:
+    active: true
+  CollapsibleIfStatements:
+    active: true
+  UseIfEmptyOrIfBlank:
+    active: true
+  ForbiddenMethodCall:
+    active: true
+    methods:
+      - reason: 'Thread.sleep in library code turns a timeout into a stall; schedule instead.'
+        value: 'java.lang.Thread.sleep'
+    # The timing tests sleep to make a gap they can measure.
+    excludes: ['**/test/**']
+  ForbiddenMethodCall/NoRunCatching:
+    # A second instance, so the ban reaches the tests the one above excludes.
+    # `runCatching` catches Throwable and turns it into a `Result` that is one
+    # `getOrNull` from silence.
+    active: true
+    methods:
+      - reason: 'Catch the specific exception, or use shouldThrow in a test.'
+        value: 'kotlin.runCatching'
+
+potential-bugs:
+  ImplicitDefaultLocale:
+    excludes: ['**/test/**']
