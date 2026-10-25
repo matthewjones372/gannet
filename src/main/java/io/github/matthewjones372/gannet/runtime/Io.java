@@ -153,6 +153,12 @@ final class Io {
         if (f.sendError < 0) throw new IOException("Connection lost: send failed with errno " + -f.sendError);
     }
 
+    /** Bytes the current fiber has written that the kernel has not yet taken. */
+    static long pending() {
+        Fiber f = Carrier.current().current;
+        return f.nextLength + (f.sendInFlight ? f.sendLeft : 0L);
+    }
+
     /** Called by the carrier when [f]'s send has completed and writes collected meanwhile. */
     static void sendNext(Carrier c, Fiber f) {
         c.endRingSend(f);
@@ -199,6 +205,20 @@ final class Io {
         if (f.fd < 0 || f.zombie) return;
         c.ring.prep(Ring.OP_SHUTDOWN, c.fileFlag, 0, f.fd, 0L, 0L, SHUT_RDWR, 0, 0, 0, Carrier.CLOSE | f.id);
         f.outstanding++;
+    }
+
+    /**
+     * Shuts the current fiber's connection down and parks until that is done, failing a send still in flight. Waited
+     * for because the ring runs a shutdown on a worker: one left in flight could land after the close that follows,
+     * on whichever connection has taken the same descriptor since.
+     */
+    static void shutdownAndWait() {
+        Carrier c = Carrier.current();
+        Fiber f = c.current;
+        if (f.fd < 0 || f.zombie) return;
+        c.ring.prep(Ring.OP_SHUTDOWN, c.fileFlag, 0, f.fd, 0L, 0L, SHUT_RDWR, 0, 0, 0, Carrier.WAKE | f.id);
+        f.outstanding++;
+        Fiber.park();
     }
 
     /** Closes [fd] through the ring without waiting: a direct descriptor has no number the close system call knows. */
