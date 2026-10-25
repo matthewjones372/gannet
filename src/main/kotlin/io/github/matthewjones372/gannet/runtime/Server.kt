@@ -3,7 +3,6 @@ package io.github.matthewjones372.gannet.runtime
 import io.github.matthewjones372.gannet.GannetConfig
 import io.github.matthewjones372.gannet.HttpExchange
 import io.github.matthewjones372.gannet.HttpHandler
-import io.github.matthewjones372.gannet.MalformedBodyException
 import java.io.IOException
 import java.util.concurrent.Executor
 import javax.net.ssl.SSLException
@@ -35,19 +34,17 @@ private val logger = System.getLogger("io.github.matthewjones372.gannet")
  * again while the connection stays open. Requests are answered in the order they arrived, so pipelining needs nothing
  * more; replies to requests already read are batched into one write.
  */
-internal class Connection(private val fd: Int, private val shared: Shared) : Session {
+internal class Connection(private val fd: Int, private val shared: Shared) :
+    Inbound(shared.read),
+    Session {
     private val carrier = Carrier.current()
     private val fiber = Io.fiber()
     private val config = shared.config
     private val transport = shared.transport()
     val out = shared.out
-    val maxHeaderBytes = config.maxHeaderBytes
+    override val maxHeaderBytes = config.maxHeaderBytes
     val maxBodyBytes = config.maxBodyBytes
 
-    private var own: ByteArray? = null
-    private var buf = shared.read
-    private var start = 0
-    private var end = 0
     private var eof = false
 
     /** When the fiber started waiting on its peer, or zero when it is not. */
@@ -130,17 +127,12 @@ internal class Connection(private val fd: Int, private val shared: Shared) : Ses
 
     fun log(t: Throwable) = logger.log(System.Logger.Level.WARNING, "A handler failed; answered 500", t)
 
-    private fun nextHead(): Head? {
-        while (true) {
-            start += blankLines(buf, start, end)
-            if (start == end && (eof || stopping)) return null
-            when (val parsed = parseHead(buf, start, end, config.maxRequestLineBytes, config.maxHeaderBytes)) {
-                is Parse.Complete -> return parsed.head.also { start = parsed.end }
-                is Parse.Refused -> return null.also { refuse(parsed.status, parsed.reason) }
-                Parse.Incomplete -> if (!fill(idle = start == end)) return null
-            }
+    private fun nextHead(): Head? =
+        when (val parsed = nextHead(config.maxRequestLineBytes, config.maxHeaderBytes, config.maxHeaderCount)) {
+            is Parse.Complete -> parsed.head
+            is Parse.Refused -> null.also { refuse(parsed.status, parsed.reason) }
+            else -> null
         }
-    }
 
     private fun refuse(status: Int, reason: String) {
         val body = reason.toByteArray()
@@ -195,33 +187,15 @@ internal class Connection(private val fd: Int, private val shared: Shared) : Ses
 
     // ------------------------------------------------------------------ reading
 
-    fun buffered(): Int = end - start
+    override val ending: Boolean get() = eof || stopping
 
-    fun take(into: ByteArray, offset: Int, length: Int) {
-        System.arraycopy(buf, start, into, offset, length)
-        start += length
-    }
+    override fun fillHead(idle: Boolean): Boolean = fill(idle)
 
-    /** Reads more of a body, which has to be there: the connection ending first breaks the body. */
-    fun fillBody() {
-        if (!fill(reading = exchange?.reader)) throw MalformedBodyException("The connection ended before the body did")
-    }
+    override fun fillMore(): Boolean = fill(reading = exchange?.reader)
 
-    /**
-     * The next line, without its line ending, reading more as needed; null if its content runs past [max] bytes. An
-     * ended connection breaks the body the line belongs to.
-     */
-    fun line(max: Int): String? {
-        while (true) {
-            val lf = Scan.indexOf(buf, LF.toInt(), start, minOf(end, start + max + 2))
-            if (lf >= 0) {
-                val content = if (lf > start && buf[lf - 1] == CR) lf - 1 else lf
-                if (content - start > max) return null
-                return String(buf, start, content - start, Charsets.ISO_8859_1).also { start = lf + 1 }
-            }
-            if (end - start > max + 1) return null
-            fillBody()
-        }
+    override fun sendContinue() {
+        if (exchange?.phase != Phase.OPEN) throw IOException("The reply was sent before the body was asked for")
+        out.put(CONTINUE)
     }
 
     /**
@@ -251,35 +225,6 @@ internal class Connection(private val fd: Int, private val shared: Shared) : Ses
             end += more
         }
         return true
-    }
-
-    /** Room after [end]: the lent buffer again when nothing is held, else compacted, else grown into one of its own. */
-    private fun makeRoom() {
-        if (start == end) {
-            start = 0
-            end = 0
-            buf = shared.read
-        } else if (end == buf.size) {
-            if (start > 0) {
-                System.arraycopy(buf, start, buf, 0, end - start)
-                end -= start
-                start = 0
-            } else {
-                buf = buf.copyOf(buf.size * 2).also { own = it }
-            }
-        }
-    }
-
-    /** Moves bytes still unread out of the lent buffer before another connection reads into it. */
-    private fun keepRest() {
-        if (buf !== shared.read || start == end) return
-        val rest = end - start
-        val mine = own?.takeIf { it.size >= rest } ?: ByteArray(maxOf(MIN_OWN, Integer.highestOneBit(rest - 1) shl 1))
-        System.arraycopy(buf, start, mine, 0, rest)
-        own = mine
-        buf = mine
-        start = 0
-        end = rest
     }
 
     // ------------------------------------------------------------------ writing
@@ -351,6 +296,5 @@ internal class Connection(private val fd: Int, private val shared: Shared) : Ses
 
     private companion object {
         const val LARGE = 32 * 1024
-        const val MIN_OWN = 4 * 1024
     }
 }

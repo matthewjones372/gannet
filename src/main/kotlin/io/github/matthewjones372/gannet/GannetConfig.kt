@@ -19,6 +19,7 @@ import java.time.Duration
  * @property fixedFiles direct descriptors per carrier, zero for ordinary ones.
  * @property heldBuffers receive buffers one connection may hold unread before its receive is paused.
  * @property tls TLS for every connection, or null for plain TCP.
+ * @property maxHeaderCount header field lines a request may have; past this, 431.
  */
 data class GannetConfig(
     val host: String = "127.0.0.1",
@@ -39,6 +40,7 @@ data class GannetConfig(
     val heldBuffers: Int = 16,
     val tick: Duration = Duration.ofMillis(TICK_MILLIS),
     val tls: GannetTls? = null,
+    val maxHeaderCount: Int = HEADER_COUNT,
 ) {
     init {
         require(port in 0..MAX_PORT) { "port must be in 0..$MAX_PORT, not $port" }
@@ -48,6 +50,7 @@ data class GannetConfig(
         }
         require(bufferSize > 0) { "bufferSize must be positive, not $bufferSize" }
         require(maxRequestLineBytes in 1..maxHeaderBytes) { "maxRequestLineBytes must be in 1..maxHeaderBytes" }
+        require(maxHeaderCount > 0) { "maxHeaderCount must be positive, not $maxHeaderCount" }
         require(heldBuffers > 0) { "heldBuffers must be positive, not $heldBuffers" }
         require(!tick.isNegative && !tick.isZero) { "tick must be positive, not $tick" }
     }
@@ -58,6 +61,7 @@ private const val MAX_BUFFERS = 32_768
 
 private const val REQUEST_LINE = 8 * 1024
 private const val HEADER_BYTES = 16 * 1024
+private const val HEADER_COUNT = 100
 private const val DRAIN_BYTES = 64 * 1024L
 private const val THIRTY = 30L
 private const val TICK_MILLIS = 250L

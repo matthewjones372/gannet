@@ -12,7 +12,7 @@ import org.junit.jupiter.params.provider.CsvSource
 class HeadTest {
     private fun parse(text: String, maxLine: Int = 8192, maxHead: Int = 16384): Parse {
         val bytes = text.toByteArray(Charsets.ISO_8859_1)
-        return parseHead(bytes, 0, bytes.size, maxLine, maxHead)
+        return parseHead(bytes, 0, bytes.size, maxLine, maxHead, 100)
     }
 
     private fun head(text: String): Head = parse(text).shouldBeInstanceOf<Parse.Complete>().head
