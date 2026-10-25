@@ -49,6 +49,13 @@ All notable changes to Gannet are recorded here. Gannet is experimental, and unt
   producer faster than one carrier round trip per piece is no longer held to that pace: 64-byte frames from another
   thread went from about 21 µs to under 2 µs each on loopback. `GannetConfig` gains that parameter, after
   `heldBuffers`.
+- `RequestBody.readAll` reads a body of known length straight from the connection's input into an array of exactly
+  its size, and a chunked one into an array that starts at 64 bytes and doubles, trimmed once at the end. It used to
+  zero a 16 KiB buffer to read through on every call, and a second 16 KiB one to collect a chunked body into. A
+  2-byte body now costs its own 24-byte array where it cost 16 KiB (32 KiB chunked), and a minimal handler reading
+  small POST bodies whole went from about 208k to 302k requests a second on loopback (170k to 299k chunked). A
+  declared length over 1 MiB still starts at 1 MiB and grows as the bytes arrive. Streamed reads off the carrier and
+  the drain of an unread body size their buffers to what a known length has left, too.
 - `GannetSupport.problem()` now reports a problem only when no engine can run: where io_uring is refused but epoll
   works, it is null. Linux older than 6.1 is no longer a problem by itself; it keeps io_uring out, and the server runs
   on epoll.
