@@ -1,0 +1,62 @@
+name: snapshot
+
+# Something to try before it is a release. A `v*` tag puts a version on Maven
+# Central for good; a snapshot goes to Central's snapshot repository, which
+# drops it after 90 days. Dispatched by hand, from the branch whose next version
+# should be tried, rather than on every push: whether snapshots count against
+# the Portal's monthly limits is something the Portal does not say.
+#
+# Consumers add https://central.sonatype.com/repository/maven-snapshots/ and
+# depend on the version this prints, e.g. `0.1.0-SNAPSHOT`.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+
+    # No signing key: a snapshot does not have to be signed, and a job that does
+    # not hold the key cannot sign a release by mistake.
+    env:
+      ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+      ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+      # A snapshot runs the same gate a push does, io_uring tests included.
+      GANNET_REQUIRE_URING: "1"
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The version is derived from the nearest `v` tag, and a shallow
+          # checkout has no tags to derive it from.
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      # Dispatched on a tag, axion would give a release version, and the plugin
+      # would stage it for Central rather than send it to the snapshot repository.
+      - name: Refuse anything but a snapshot
+        run: |
+          version=$(./gradlew -q currentVersion | sed -n 's/^Project version: //p')
+          echo "version: $version"
+          case "$version" in
+            "") echo "could not read the version"; exit 1 ;;
+            *-SNAPSHOT) ;;
+            *) echo "$version is not a snapshot; dispatch this from a branch"; exit 1 ;;
+          esac
+
+      # A snapshot that cannot build is not worth trying.
+      - name: Build and test
+        run: ./gradlew build --stacktrace
+
+      # For a -SNAPSHOT version the plugin uploads to Central's snapshot
+      # repository rather than staging a bundle in the Portal.
+      - name: Publish to the snapshot repository
+        run: ./gradlew publishToMavenCentral --no-configuration-cache
