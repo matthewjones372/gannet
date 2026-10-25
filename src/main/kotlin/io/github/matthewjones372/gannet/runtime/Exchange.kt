@@ -13,6 +13,7 @@ import java.time.Duration
 import java.util.Objects
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 internal enum class Phase { OPEN, STREAMING, DONE }
 
@@ -36,7 +37,7 @@ internal class UringExchange(val conn: Connection, val head: Head) : HttpExchang
     private var bodyless = false
     private val isHead = head.method == "HEAD"
 
-    val reader = BodyReader(conn, this)
+    val reader = BodyReader(conn, head)
 
     override val request = HttpRequest(
         head.method, head.target, head.path, head.query, head.version, head.headers, Body(this),
@@ -126,6 +127,13 @@ internal class UringExchange(val conn: Connection, val head: Head) : HttpExchang
         if (chunked) out.putHex(length).also { out.crlf() }
         conn.emit(bytes, offset, length)
         if (chunked) out.crlf()
+        conn.sendStreamed()
+    }
+
+    /** Parks until the kernel has taken everything the stream has written so far. */
+    fun flushStream() {
+        check(phase == Phase.STREAMING) { "The reply stream has ended" }
+        conn.flush()
         conn.awaitSent()
     }
 
@@ -183,10 +191,10 @@ internal class UringExchange(val conn: Connection, val head: Head) : HttpExchang
 }
 
 /** The body as the fiber reads it off the connection: framing, limits, `100-continue` and the drain. */
-internal class BodyReader(private val conn: Connection, private val ex: UringExchange) {
+internal class BodyReader(private val input: Inbound, private val head: Head) {
     private enum class Chunk { SIZE, DATA, DATA_END, TRAILERS }
 
-    private val framing = ex.head.framing
+    private val framing = head.framing
 
     /** Set from any thread by [RequestBody.fail]. */
     @Volatile
@@ -248,16 +256,15 @@ internal class BodyReader(private val conn: Connection, private val ex: UringExc
     }
 
     private fun askToContinue() {
-        if (!ex.head.expectContinue || continueSent) return
-        if (ex.phase != Phase.OPEN) throw IOException("The reply was sent before the body was asked for")
+        if (!head.expectContinue || continueSent) return
+        input.sendContinue()
         continueSent = true
-        conn.out.put(CONTINUE)
     }
 
     private fun readFixed(into: ByteArray, offset: Int, length: Int): Int {
-        if (conn.buffered() == 0) conn.fillBody()
-        val n = minOf(length.toLong(), remaining, conn.buffered().toLong()).toInt()
-        conn.take(into, offset, n)
+        if (input.buffered() == 0) input.fillBody()
+        val n = minOf(length.toLong(), remaining, input.buffered().toLong()).toInt()
+        input.take(into, offset, n)
         remaining -= n
         if (remaining == 0L) done = true
         return n
@@ -280,28 +287,38 @@ internal class BodyReader(private val conn: Connection, private val ex: UringExc
     }
 
     private fun chunkSize() {
-        val line = conn.line(MAX_CHUNK_LINE) ?: throw MalformedBodyException("A chunk size line is too long")
-        val digits = line.substringBefore(';').trim()
-        if (digits.isEmpty() || digits.length > MAX_HEX_DIGITS || !digits.all { Character.digit(it, HEX) >= 0 }) {
-            throw MalformedBodyException("Bad chunk size")
-        }
-        remaining = digits.toLong(HEX)
-        state = if (remaining == 0L) Chunk.TRAILERS else Chunk.DATA
+        val lf = input.lineEnd(MAX_CHUNK_LINE)
+        if (lf < 0) throw MalformedBodyException("A chunk size line is too long")
+        val size = chunkSize(input.bytes, input.position, lf)
+        if (size < 0) throw MalformedBodyException("Bad chunk size line")
+        input.skipTo(lf + 1)
+        remaining = size
+        state = if (size == 0L) Chunk.TRAILERS else Chunk.DATA
     }
 
     private fun chunkEnd() {
-        if (conn.line(0) == null) throw MalformedBodyException("A chunk does not end with CR LF")
+        val lf = input.lineEnd(1)
+        if (lf != input.position + 1 || input.bytes[input.position] != CR) {
+            throw MalformedBodyException("A chunk does not end with CR LF")
+        }
+        input.skipTo(lf + 1)
         state = Chunk.SIZE
     }
 
-    /** Reads trailer fields up to the empty line, and throws them away; true at that line. */
+    /** Reads trailer fields up to the empty line, checks them, and throws them away; true at that line. */
     private fun trailers(): Boolean {
+        val max = input.maxHeaderBytes
         var read = 0
         while (true) {
-            val line = conn.line(conn.maxHeaderBytes) ?: throw MalformedBodyException("The trailer fields are too long")
-            if (line.isEmpty()) break
-            read += line.length
-            if (read > conn.maxHeaderBytes) throw MalformedBodyException("The trailer fields are too long")
+            val lf = input.lineEnd(max - read)
+            if (lf < 0) throw MalformedBodyException("The trailer fields are too long")
+            val from = input.position
+            val b = input.bytes
+            if (lf == from || b[lf - 1] != CR) throw MalformedBodyException("A trailer line does not end with CR LF")
+            input.skipTo(lf + 1)
+            if (lf - 1 == from) break
+            if (!isFieldLine(b, from, lf - 1)) throw MalformedBodyException("Bad trailer field")
+            read += lf + 1 - from
         }
         done = true
         return true
@@ -329,7 +346,7 @@ internal class BodyReader(private val conn: Connection, private val ex: UringExc
     fun mustClose(budget: Long): Boolean = when {
         done -> false
         broken || (failure != null && failure !is BodyTooLargeException) -> true
-        ex.head.expectContinue && !continueSent -> true
+        head.expectContinue && !continueSent -> true
         else -> framing is Framing.Fixed && remaining > budget
     }
 
@@ -338,8 +355,6 @@ internal class BodyReader(private val conn: Connection, private val ex: UringExc
         const val MAX_ARRAY = Int.MAX_VALUE - 16L
         const val FIRST_ARRAY = 1L shl 20
         const val MAX_CHUNK_LINE = 1024
-        const val MAX_HEX_DIGITS = 15
-        const val HEX = 16
     }
 }
 
@@ -404,15 +419,42 @@ internal class Body(private val ex: UringExchange) : RequestBody {
     }
 }
 
-/** A reply body being written, from the fiber directly or from another thread through mail. */
+/**
+ * A reply body being written, from the fiber directly or from another thread through mail.
+ *
+ * From another thread, a write below the watermark posts a copy of its bytes and returns without waiting for the
+ * fiber; [posted] counts those bytes until the fiber has taken them. Past the watermark a write waits for the fiber,
+ * which by then has taken everything posted before it and holds the write until the connection's unsent bytes are
+ * back under the watermark, so a slow reader costs at most about twice the watermark. A posted write that fails is
+ * kept in [failure] and thrown by the next call.
+ */
 internal class Stream(private val ex: UringExchange) : ResponseStream {
     @Volatile
     private var ended = false
 
+    private val posted = AtomicLong()
+
+    @Volatile
+    private var failure: Exception? = null
+
     override fun write(bytes: ByteArray, offset: Int, length: Int) {
         Objects.checkFromIndexSize(offset, length, bytes.size)
         check(!ended) { "The reply stream has ended" }
-        if (ex.onCarrier) ex.writeChunk(bytes, offset, length) else ask(Mail.Chunk(ex, bytes, offset, length, Answer()))
+        if (ex.onCarrier) return ex.writeChunk(bytes, offset, length)
+        failure?.let { throw it }
+        if (length == 0) return
+        if (posted.get() + length <= ex.conn.watermark) {
+            posted.addAndGet(length.toLong())
+            ex.conn.post(Mail.Piece(ex, this, bytes.copyOfRange(offset, offset + length)))
+        } else {
+            ask(Mail.Chunk(ex, bytes, offset, length, Answer()))
+        }
+    }
+
+    override fun flush() {
+        check(!ended) { "The reply stream has ended" }
+        if (ex.onCarrier) return ex.flushStream()
+        ask(Mail.Flush(ex, Answer()))
     }
 
     override fun close() {
@@ -427,8 +469,15 @@ internal class Stream(private val ex: UringExchange) : ResponseStream {
         if (ex.onCarrier) ex.abortStream() else ex.conn.post(Mail.Abort(ex))
     }
 
+    /** The fiber has taken a posted piece of [length] bytes; [failed] is what writing it threw, if anything. */
+    fun taken(length: Int, failed: Exception?) {
+        posted.addAndGet(-length.toLong())
+        if (failed != null && failure == null) failure = failed
+    }
+
     private fun ask(mail: Mail.Asking<Unit>) {
         ex.conn.post(mail)
         mail.answer.await(null)
+        failure?.let { throw it }
     }
 }

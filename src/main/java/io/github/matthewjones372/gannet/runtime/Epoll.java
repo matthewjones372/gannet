@@ -186,6 +186,11 @@ final class Epoll extends Engine {
     }
 
     @Override
+    boolean hasQueued() {
+        return queued > 0;
+    }
+
+    @Override
     void enter(boolean wait) {
         // Nothing [execute] does queues more, so the count is fixed for the pass.
         for (int i = 0; i < queued; i++) {

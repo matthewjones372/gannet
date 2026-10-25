@@ -72,6 +72,8 @@ dependencies {
     // A second, independent HTTP/1.1 client, beside the JDK's, for the replies
     // each one has to read.
     testImplementation("org.eclipse.jetty:jetty-client:12.1.13")
+    // Fuzz targets: `test` replays their seeds and saved crashes, and the `fuzz` task fuzzes one of them.
+    testImplementation("com.code-intelligence:jazzer-junit:0.30.0")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
@@ -100,6 +102,27 @@ val testEpoll = tasks.register<Test>("testEpoll") {
 }
 
 tasks.named("check") { dependsOn(testEpoll) }
+
+/**
+ * Fuzzes the `@FuzzTest` named by `-PfuzzTarget` (a test filter, such as `*HeadFuzzTest.head`) for `-PfuzzSeconds`.
+ * Jazzer fuzzes one target per run; `test` replays every target's seeds and saved findings without fuzzing.
+ */
+tasks.register<Test>("fuzz") {
+    group = "verification"
+    description = "Fuzzes one @FuzzTest target."
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    val target = providers.gradleProperty("fuzzTarget")
+    val seconds = providers.gradleProperty("fuzzSeconds").orElse("60")
+    filter { includeTestsMatching(target.getOrElse("*FuzzTest*")) }
+    environment("JAZZER_FUZZ", "1")
+    systemProperty("jazzer.max_duration", "${seconds.get()}s")
+    systemProperty("jazzer.instrumentation_includes", "io.github.matthewjones372.gannet.**")
+    systemProperty("junit.jupiter.execution.timeout.default", "30m")
+    // A fuzzing run is never up to date, and never comes from the build cache.
+    outputs.upToDateWhen { false }
+    outputs.cacheIf { false }
+}
 
 // BCV reads classes with an ASM that stops short of class file 69 (JDK 25).
 configurations.matching { it.name.startsWith("bcv-rt-jvm-cp") }.configureEach {
@@ -155,6 +178,8 @@ spotless {
 // host. The floor is a ratchet against regression, set below where the number
 // sits, not a target to write tests towards.
 kover {
+    // Fuzzing measures nothing the floor is about, and must not run as part of `check`.
+    currentProject { instrumentation { disabledForTestTasks.add("fuzz") } }
     reports {
         verify {
             rule {

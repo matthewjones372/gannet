@@ -27,6 +27,9 @@ abstract class Engine {
                        int bufGroup, int fileIndex, long userData);
 
     /** Sends what is queued and gathers completions, waiting for at least one when [wait]. */
+    /** Whether submissions are queued that have not yet been handed on. */
+    abstract boolean hasQueued();
+
     abstract void enter(boolean wait);
 
     /** Hands every completion gathered so far to [to], and says how many there were. */

@@ -145,8 +145,10 @@ class LifecycleTest {
     }
 
     @Test
-    fun `a connection that sends nothing is closed after the idle timeout`() =
-        serving(testConfig.copy(idleTimeout = Duration.ofMillis(200)), { it.respond(200) }) { server ->
+    fun `a connection that sends nothing, or half a head, is closed after its timeout`() =
+        serving(testConfig.copy(idleTimeout = Duration.ofMillis(200), headTimeout = Duration.ofMillis(200)), {
+            it.respond(200)
+        }) { server ->
             Raw(server.port).use { raw -> raw.closedByServer() shouldBe true }
             Raw(server.port).use { raw ->
                 raw.send("GET / HTTP/1.1\r\nHo")

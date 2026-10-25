@@ -128,6 +128,11 @@ final class Ring extends Engine {
     }
 
     @Override
+    boolean hasQueued() {
+        return queued > 0;
+    }
+
+    @Override
     void enter(boolean wait) {
         INT.setRelease(sq, sqTail, tail);
         int submitting = queued;
