@@ -1,0 +1,59 @@
+name: build
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+# A push that lands while an earlier run is still going supersedes it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # A GitHub-hosted VM rather than a container: Docker's default seccomp
+    # profile refuses `io_uring_setup` with EPERM, and these tests need it.
+    runs-on: ubuntu-latest
+
+    env:
+      # Fail rather than skip if io_uring turns out to be unusable here. It also
+      # turns on the coverage floor, which counts only where the tests run.
+      GANNET_REQUIRE_URING: "1"
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The version is derived from the nearest `v` tag.
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Say what the kernel allows
+        run: |
+          uname -r
+          cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo "no io_uring_disabled sysctl"
+
+      - name: Build and test
+        run: ./gradlew build --stacktrace
+
+      # The suites bind real sockets and assert on delivery, so a failure is
+      # worth reading rather than guessing at.
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports
+          path: |
+            build/reports/tests/
+            build/test-results/
+          retention-days: 7
