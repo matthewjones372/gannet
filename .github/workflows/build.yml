@@ -73,10 +73,12 @@ jobs:
 
       - name: Test inside Docker's default seccomp profile
         run: |
-          docker run --rm -v "$PWD":/work -w /work \
-            -e GANNET_EXPECT_ENGINE=EPOLL \
+          # As the runner's own user, so the checkout's owner matches and the
+          # build's files stay removable; Gradle's home goes in the workspace.
+          docker run --rm -v "$PWD":/work -w /work --user "$(id -u):$(id -g)" \
+            -e GANNET_EXPECT_ENGINE=EPOLL -e GRADLE_USER_HOME=/work/.gradle-home -e HOME=/tmp \
             eclipse-temurin:25-jdk \
-            bash -c 'git config --global --add safe.directory /work && ./gradlew test --stacktrace'
+            ./gradlew test --stacktrace
 
       - name: Upload test reports
         if: failure()
