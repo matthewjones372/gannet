@@ -18,6 +18,8 @@ import java.time.Duration
  * @property bufferCount receive buffers per carrier, a power of two; [bufferSize] bytes each.
  * @property fixedFiles direct descriptors per carrier, zero for ordinary ones.
  * @property heldBuffers receive buffers one connection may hold unread before its receive is paused.
+ * @property streamHighWatermark bytes of a streamed reply that may wait unsent before [ResponseStream.write] holds the
+ *   writer back; below it a write only queues its bytes. Zero makes every write wait until the kernel has taken it.
  * @property tls TLS for every connection, or null for plain TCP.
  * @property headTimeout how long a request head may take to arrive in full, from its first byte; past it the connection
  *   is closed. It is what stops a client sending its head a byte at a time (slow loris).
@@ -53,6 +55,7 @@ data class GannetConfig(
     val bufferSize: Int = 4096,
     val fixedFiles: Int = 16384,
     val heldBuffers: Int = 16,
+    val streamHighWatermark: Int = STREAM_HIGH_WATERMARK,
     val tick: Duration = Duration.ofMillis(TICK_MILLIS),
     val tls: GannetTls? = null,
     val headTimeout: Duration = Duration.ofSeconds(TWENTY),
@@ -73,6 +76,7 @@ data class GannetConfig(
         require(bufferSize > 0) { "bufferSize must be positive, not $bufferSize" }
         require(maxRequestLineBytes in 1..maxHeaderBytes) { "maxRequestLineBytes must be in 1..maxHeaderBytes" }
         require(heldBuffers > 0) { "heldBuffers must be positive, not $heldBuffers" }
+        require(streamHighWatermark >= 0) { "streamHighWatermark must not be negative, not $streamHighWatermark" }
         require(!tick.isNegative && !tick.isZero) { "tick must be positive, not $tick" }
         listOf(
             "idleTimeout" to idleTimeout,
@@ -102,3 +106,4 @@ private const val MAX_CONNECTIONS = 10_000
 private const val MAX_HANDSHAKES = 64
 private const val MAX_BUFFERED = 1 shl 20
 private const val TICK_MILLIS = 250L
+private const val STREAM_HIGH_WATERMARK = 64 * 1024

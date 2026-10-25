@@ -13,8 +13,8 @@ import javax.net.ssl.SSLHandshakeException
 
 /**
  * The bytes of one connection as its fiber reads and writes them: [Io]'s calls on a plain connection, or the same
- * calls with TLS between them and the socket. Only [awaitData] and [awaitSend] park, as with [Io], and a connection
- * calls [beforePark] before either.
+ * calls with TLS between them and the socket. Only [awaitData], [awaitSend] and [awaitSendBelow] park, as with [Io],
+ * and a connection calls [beforePark] before any of them.
  */
 internal interface Transport {
     /** Runs the handshake as far as it can without waiting; true once it is done, false when it needs [awaitData]. */
@@ -31,6 +31,9 @@ internal interface Transport {
 
     /** Parks until everything written has been taken by the kernel. */
     fun awaitSend() = Io.awaitSend()
+
+    /** Parks until no more than [limit] written bytes are still waiting for the kernel. */
+    fun awaitSendBelow(limit: Int) = Io.awaitSendBelow(limit)
 
     /** The fiber is about to park: nothing of this connection may stay in a buffer the carrier lends out. */
     fun beforePark()
