@@ -125,8 +125,8 @@ class TlsTest {
     }
 
     @Test
-    fun `a client that never finishes its handshake meets the idle timeout`() =
-        serving(tlsConfig.copy(idleTimeout = Duration.ofMillis(300)), echo) { server ->
+    fun `a client that never finishes its handshake meets the handshake timeout`() =
+        serving(tlsConfig.copy(handshakeTimeout = Duration.ofSeconds(2)), echo) { server ->
             Raw(server.port).use { raw ->
                 raw.send(byteArrayOf(0x16, 3, 1, 0, 100))
                 raw.closedByServer() shouldBe true

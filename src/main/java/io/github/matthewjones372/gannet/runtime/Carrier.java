@@ -40,11 +40,15 @@ final class Carrier extends Thread implements Ring.Completions {
 
     /** How a carrier is sized; see `GannetConfig` for what each means. */
     record Settings(int ringEntries, int completionEntries, int bufferCount, int bufferSize, int fixedFiles,
-                    long tickNanos, int heldBuffers) {}
+                    long tickNanos, int heldBuffers, int maxConnections, int maxHandshakes) {}
 
     private final int listener;
     private final Settings settings;
     private final IntConsumer serve;
+    /** Connections open across every carrier of the server. */
+    private final AtomicInteger open;
+    /** Connections on this carrier whose handshake has not finished. */
+    private int handshakes;
     private final ArrayDeque<Fiber> ready = new ArrayDeque<>();
     private Fiber[] fibers = new Fiber[1024];
     private int[] free = new int[1024];
@@ -90,7 +94,7 @@ final class Carrier extends Thread implements Ring.Completions {
     private MemorySegment tickSpec;
     private Fiber acceptor;
     private boolean acceptorInAccept;
-    /** The acceptor, when it is waiting out a failed accept until the next tick. */
+    /** The acceptor, when it is waiting out a failed accept or a full cap, until the next tick or [admit]. */
     private Fiber tickSleeper;
     boolean stopping;
     private boolean forced;
@@ -100,11 +104,15 @@ final class Carrier extends Thread implements Ring.Completions {
     private boolean exiting;
     private long deadline;
 
-    /** A carrier that serves each connection accepted on [listener] by calling [serve] in a fiber of its own. */
-    Carrier(String name, int listener, Settings settings, IntConsumer serve) {
+    /**
+     * A carrier that serves each connection accepted on [listener] by calling [serve] in a fiber of its own, counting
+     * the server's open connections in [open].
+     */
+    Carrier(String name, int listener, Settings settings, AtomicInteger open, IntConsumer serve) {
         super(name);
         this.listener = listener;
         this.settings = settings;
+        this.open = open;
         this.serve = serve;
     }
 
@@ -144,6 +152,11 @@ final class Carrier extends Thread implements Ring.Completions {
         acceptor = spawn(this::acceptLoop);
     }
 
+    /**
+     * Accepts while the caps allow. Past either, the connection just accepted waits, unserved, and no other is
+     * accepted, so the rest wait in the kernel's backlog, until a connection here ends or a handshake here finishes
+     * ([admit]), or the next tick for a connection ending on another carrier.
+     */
     private void acceptLoop() {
         while (!stopping) {
             acceptorInAccept = true;
@@ -159,13 +172,26 @@ final class Carrier extends Thread implements Ring.Completions {
                 Fiber.park();
                 continue;
             }
-            spawn(() -> {
+            while (!stopping && !admissible()) {
+                tickSleeper = current;
+                Fiber.park();
+            }
+            if (stopping) {
+                Io.closeNow(fd);
+                break;
+            }
+            handshakes++;
+            Fiber f = spawn(() -> {
                 try {
                     serve.accept(fd);
                 } finally {
+                    endHandshake(current);
                     Io.finish(fd);
+                    open.decrementAndGet();
+                    admit();
                 }
             });
+            f.handshaking = true;
         }
         listenerClosed = true;
         Sys.close(listener);
@@ -250,6 +276,32 @@ final class Carrier extends Thread implements Ring.Completions {
     /** Resumes [f] if it is parked waiting for data, which it then finds has not come. On the carrier only. */
     void wakeReader(Fiber f) {
         resumeReader(f);
+    }
+
+    /** Whether one more connection fits under both caps; if it does, it is counted in [open]. */
+    private boolean admissible() {
+        if (handshakes >= settings.maxHandshakes()) return false;
+        while (true) {
+            int n = open.get();
+            if (n >= settings.maxConnections()) return false;
+            if (open.compareAndSet(n, n + 1)) return true;
+        }
+    }
+
+    /** [f]'s handshake is over, done or failed: it no longer counts against the cap. On the carrier only. */
+    void endHandshake(Fiber f) {
+        if (!f.handshaking) return;
+        f.handshaking = false;
+        handshakes--;
+        admit();
+    }
+
+    /** Room may have opened under a cap: the acceptor, if it is waiting, looks again. */
+    private void admit() {
+        if (tickSleeper != null) {
+            ready.add(tickSleeper);
+            tickSleeper = null;
+        }
     }
 
     /** Asks the carrier to stop accepting and end its connections, forcing them after [grace] nanoseconds. */
@@ -391,14 +443,17 @@ final class Carrier extends Thread implements Ring.Completions {
             f.sendInFlight = false;
             f.nextLength = 0;
         } else if (result < f.sendLeft) {
+            f.sentBytes += result;
             f.sendAddress += result;
             f.sendLeft -= result;
             Io.submitSend(this, f);
             return;
         } else if (f.nextLength > 0) {
+            f.sentBytes += result;
             Io.sendNext(this, f);
             return;
         } else {
+            f.sentBytes += result;
             endRingSend(f);
             f.sendInFlight = false;
         }

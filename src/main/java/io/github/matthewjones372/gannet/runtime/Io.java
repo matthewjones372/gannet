@@ -153,6 +153,12 @@ final class Io {
         if (f.sendError < 0) throw new IOException("Connection lost: send failed with errno " + -f.sendError);
     }
 
+    /** Bytes the current fiber has written that the kernel has not yet taken. */
+    static long pending() {
+        Fiber f = Carrier.current().current;
+        return f.nextLength + (f.sendInFlight ? f.sendLeft : 0L);
+    }
+
     /** Called by the carrier when [f]'s send has completed and writes collected meanwhile. */
     static void sendNext(Carrier c, Fiber f) {
         c.endRingSend(f);

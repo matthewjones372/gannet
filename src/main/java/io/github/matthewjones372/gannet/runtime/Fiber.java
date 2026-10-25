@@ -62,6 +62,10 @@ final class Fiber {
     long sendAddress;
     int sendLeft;
     int sendError;
+    /** Bytes the kernel has taken from this fiber's sends, so the carrier's timer can tell a stalled reader. */
+    long sentBytes;
+    /** Accepted with TLS still to set up: counted in its carrier's handshakes until [Carrier#endHandshake]. */
+    boolean handshaking;
 
     Fiber(int id, Runnable body) {
         this.id = id;
