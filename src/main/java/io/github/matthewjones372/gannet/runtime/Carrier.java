@@ -394,15 +394,14 @@ final class Carrier extends Thread implements Ring.Completions {
             f.sendAddress += result;
             f.sendLeft -= result;
             Io.submitSend(this, f);
-            return;
         } else if (f.nextLength > 0) {
             Io.sendNext(this, f);
-            return;
         } else {
             endRingSend(f);
             f.sendInFlight = false;
         }
-        if (f.waitingSend) {
+        // A fiber waiting for everything has a limit of zero, so only the last completion wakes it.
+        if (f.waitingSend && Io.unsent(f) <= f.sendWaitLimit) {
             f.waitingSend = false;
             ready.add(f);
         }

@@ -13,6 +13,7 @@ import java.time.Duration
 import java.util.Objects
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 internal enum class Phase { OPEN, STREAMING, DONE }
 
@@ -126,6 +127,13 @@ internal class UringExchange(val conn: Connection, val head: Head) : HttpExchang
         if (chunked) out.putHex(length).also { out.crlf() }
         conn.emit(bytes, offset, length)
         if (chunked) out.crlf()
+        conn.sendStreamed()
+    }
+
+    /** Parks until the kernel has taken everything the stream has written so far. */
+    fun flushStream() {
+        check(phase == Phase.STREAMING) { "The reply stream has ended" }
+        conn.flush()
         conn.awaitSent()
     }
 
@@ -404,15 +412,42 @@ internal class Body(private val ex: UringExchange) : RequestBody {
     }
 }
 
-/** A reply body being written, from the fiber directly or from another thread through mail. */
+/**
+ * A reply body being written, from the fiber directly or from another thread through mail.
+ *
+ * From another thread, a write below the watermark posts a copy of its bytes and returns without waiting for the
+ * fiber; [posted] counts those bytes until the fiber has taken them. Past the watermark a write waits for the fiber,
+ * which by then has taken everything posted before it and holds the write until the connection's unsent bytes are
+ * back under the watermark, so a slow reader costs at most about twice the watermark. A posted write that fails is
+ * kept in [failure] and thrown by the next call.
+ */
 internal class Stream(private val ex: UringExchange) : ResponseStream {
     @Volatile
     private var ended = false
 
+    private val posted = AtomicLong()
+
+    @Volatile
+    private var failure: Exception? = null
+
     override fun write(bytes: ByteArray, offset: Int, length: Int) {
         Objects.checkFromIndexSize(offset, length, bytes.size)
         check(!ended) { "The reply stream has ended" }
-        if (ex.onCarrier) ex.writeChunk(bytes, offset, length) else ask(Mail.Chunk(ex, bytes, offset, length, Answer()))
+        if (ex.onCarrier) return ex.writeChunk(bytes, offset, length)
+        failure?.let { throw it }
+        if (length == 0) return
+        if (posted.get() + length <= ex.conn.watermark) {
+            posted.addAndGet(length.toLong())
+            ex.conn.post(Mail.Piece(ex, this, bytes.copyOfRange(offset, offset + length)))
+        } else {
+            ask(Mail.Chunk(ex, bytes, offset, length, Answer()))
+        }
+    }
+
+    override fun flush() {
+        check(!ended) { "The reply stream has ended" }
+        if (ex.onCarrier) return ex.flushStream()
+        ask(Mail.Flush(ex, Answer()))
     }
 
     override fun close() {
@@ -427,8 +462,15 @@ internal class Stream(private val ex: UringExchange) : ResponseStream {
         if (ex.onCarrier) ex.abortStream() else ex.conn.post(Mail.Abort(ex))
     }
 
+    /** The fiber has taken a posted piece of [length] bytes; [failed] is what writing it threw, if anything. */
+    fun taken(length: Int, failed: Exception?) {
+        posted.addAndGet(-length.toLong())
+        if (failed != null && failure == null) failure = failed
+    }
+
     private fun ask(mail: Mail.Asking<Unit>) {
         ex.conn.post(mail)
         mail.answer.await(null)
+        failure?.let { throw it }
     }
 }

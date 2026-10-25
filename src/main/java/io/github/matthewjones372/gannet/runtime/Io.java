@@ -153,6 +153,44 @@ final class Io {
         if (f.sendError < 0) throw new IOException("Connection lost: send failed with errno " + -f.sendError);
     }
 
+    /**
+     * Parks until no more than [limit] written bytes are still waiting for the kernel, which is the backpressure on a
+     * streamed reply: below it, writes only queue. Throws if the connection failed meanwhile.
+     */
+    static void awaitSendBelow(int limit) throws IOException {
+        Fiber f = Carrier.current().current;
+        while (unsent(f) > limit) {
+            f.sendWaitLimit = limit;
+            f.waitingSend = true;
+            Fiber.park();
+        }
+        f.sendWaitLimit = 0;
+        if (f.sendError < 0) throw new IOException("Connection lost: send failed with errno " + -f.sendError);
+    }
+
+    /** Bytes the current fiber has written that the kernel has not yet taken. */
+    static int unsent() {
+        return unsent(Carrier.current().current);
+    }
+
+    /** Bytes [f] has written that the kernel has not yet taken: what is left of the send in flight, and [next]. */
+    static int unsent(Fiber f) {
+        return (f.sendInFlight ? f.sendLeft : 0) + f.nextLength;
+    }
+
+    /**
+     * For a fiber that has written and goes on running instead of parking: hands the submissions queued so far to the
+     * kernel now rather than at the carrier's next pass, and takes in the completions that have already arrived, so a
+     * send that has finished starts the next one from what was collected behind it. Nothing waits, and no fiber is
+     * resumed here: a completion only makes a fiber ready, as in the carrier's own pass.
+     */
+    static void submitNow() {
+        Carrier c = Carrier.current();
+        Ring ring = c.ring;
+        if (ring.hasQueued()) ring.enter(false);
+        if (ring.reap(c) > 0 && ring.hasQueued()) ring.enter(false);
+    }
+
     /** Called by the carrier when [f]'s send has completed and writes collected meanwhile. */
     static void sendNext(Carrier c, Fiber f) {
         c.endRingSend(f);

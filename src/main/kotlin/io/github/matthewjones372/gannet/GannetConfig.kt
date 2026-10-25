@@ -18,6 +18,8 @@ import java.time.Duration
  * @property bufferCount receive buffers per carrier, a power of two; [bufferSize] bytes each.
  * @property fixedFiles direct descriptors per carrier, zero for ordinary ones.
  * @property heldBuffers receive buffers one connection may hold unread before its receive is paused.
+ * @property streamHighWatermark bytes of a streamed reply that may wait unsent before [ResponseStream.write] holds the
+ *   writer back; below it a write only queues its bytes. Zero makes every write wait until the kernel has taken it.
  * @property tls TLS for every connection, or null for plain TCP.
  */
 data class GannetConfig(
@@ -37,6 +39,7 @@ data class GannetConfig(
     val bufferSize: Int = 4096,
     val fixedFiles: Int = 16384,
     val heldBuffers: Int = 16,
+    val streamHighWatermark: Int = STREAM_HIGH_WATERMARK,
     val tick: Duration = Duration.ofMillis(TICK_MILLIS),
     val tls: GannetTls? = null,
 ) {
@@ -49,6 +52,7 @@ data class GannetConfig(
         require(bufferSize > 0) { "bufferSize must be positive, not $bufferSize" }
         require(maxRequestLineBytes in 1..maxHeaderBytes) { "maxRequestLineBytes must be in 1..maxHeaderBytes" }
         require(heldBuffers > 0) { "heldBuffers must be positive, not $heldBuffers" }
+        require(streamHighWatermark >= 0) { "streamHighWatermark must not be negative, not $streamHighWatermark" }
         require(!tick.isNegative && !tick.isZero) { "tick must be positive, not $tick" }
     }
 }
@@ -61,3 +65,4 @@ private const val HEADER_BYTES = 16 * 1024
 private const val DRAIN_BYTES = 64 * 1024L
 private const val THIRTY = 30L
 private const val TICK_MILLIS = 250L
+private const val STREAM_HIGH_WATERMARK = 64 * 1024

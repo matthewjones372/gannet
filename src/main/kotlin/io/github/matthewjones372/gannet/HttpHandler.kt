@@ -34,8 +34,9 @@ interface HttpExchange {
 
     /**
      * Starts a reply whose body is written a piece at a time, chunked (or delimited by closing the connection, to an
-     * HTTP/1.0 client). Each [ResponseStream.write] returns once the kernel has taken the piece, which is the
-     * backpressure: a slow reader holds the writer.
+     * HTTP/1.0 client). A [ResponseStream.write] queues its piece and returns while the bytes not yet taken by the
+     * kernel stay under [GannetConfig.streamHighWatermark]; past it the write waits, which is the backpressure: a slow
+     * reader holds the writer.
      */
     fun stream(status: Int, headers: List<Pair<String, String>> = emptyList()): ResponseStream
 
@@ -59,8 +60,16 @@ interface HttpExchange {
  * connection. Returning from [HttpHandler.handle] without detaching closes a stream left open.
  */
 interface ResponseStream : AutoCloseable {
-    /** Writes [length] bytes of [bytes] from [offset]; returns once they are sent, throws if the connection is gone. */
+    /**
+     * Writes [length] bytes of [bytes] from [offset], which may be reused once this returns. The piece goes out at once
+     * if nothing is being sent, else right behind what is; the call waits only while more than
+     * [GannetConfig.streamHighWatermark] bytes are still unsent. Throws if the connection is gone, which a write that
+     * did not wait may report on the next call instead.
+     */
     fun write(bytes: ByteArray, offset: Int = 0, length: Int = bytes.size)
+
+    /** Waits until the kernel has taken everything written so far; throws if the connection is gone. */
+    fun flush()
 
     override fun close()
 

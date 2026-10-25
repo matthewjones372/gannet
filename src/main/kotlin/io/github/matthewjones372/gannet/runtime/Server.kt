@@ -43,6 +43,7 @@ internal class Connection(private val fd: Int, private val shared: Shared) : Ses
     val out = shared.out
     val maxHeaderBytes = config.maxHeaderBytes
     val maxBodyBytes = config.maxBodyBytes
+    val watermark = config.streamHighWatermark
 
     private var own: ByteArray? = null
     private var buf = shared.read
@@ -302,6 +303,17 @@ internal class Connection(private val fd: Int, private val shared: Shared) : Ses
 
     /** Parks until the kernel has taken everything written: a slow reader holds the writer here. */
     fun awaitSent() = awaitPeer(idle = false) { transport.awaitSend() }
+
+    /**
+     * Hands a streamed piece on, parking only while more than [watermark] bytes are still unsent: below it the piece
+     * is queued behind the send in flight, or, with none in flight, given to the kernel at once rather than when the
+     * fiber next parks.
+     */
+    fun sendStreamed() {
+        flush()
+        if (Io.unsent() > watermark) awaitPeer(idle = false) { transport.awaitSendBelow(watermark) }
+        else Io.submitNow()
+    }
 
     /** Whether the reply about to be written should close the connection after it. */
     fun closeDecided(ex: UringExchange): Boolean = stopping || ex.reader.mustClose(config.drainBytes)

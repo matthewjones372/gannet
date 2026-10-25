@@ -42,6 +42,27 @@ internal sealed class Mail(val exchange: UringExchange) {
         override fun deliver() = answering(answer) { exchange.writeChunk(bytes, offset, length) }
     }
 
+    /** A piece of [stream] its writer did not wait for: a failure is kept for the writer's next call. */
+    class Piece(exchange: UringExchange, val stream: Stream, val bytes: ByteArray) : Mail(exchange) {
+        override fun deliver() {
+            try {
+                exchange.writeChunk(bytes, 0, bytes.size)
+                stream.taken(bytes.size, null)
+            } catch (e: IOException) {
+                stream.taken(bytes.size, e)
+                throw e
+            } catch (e: IllegalStateException) {
+                stream.taken(bytes.size, e)
+            }
+        }
+
+        override fun fail(e: IOException) = stream.taken(bytes.size, e)
+    }
+
+    class Flush(exchange: UringExchange, answer: Answer<Unit>) : Asking<Unit>(exchange, answer) {
+        override fun deliver() = answering(answer) { exchange.flushStream() }
+    }
+
     class End(exchange: UringExchange, answer: Answer<Unit>) : Asking<Unit>(exchange, answer) {
         override fun deliver() = answering(answer) { exchange.endStream() }
     }
