@@ -9,17 +9,19 @@ import org.junit.jupiter.api.Test
 class SupportTest {
     @Test
     fun `this machine can run the runtime`() {
-        assumeUring()
+        assumeServer()
         GannetSupport.problem().shouldBeNull()
         GannetSupport.require()
     }
 
     @Test
-    fun `another OS, an old kernel and another architecture are each named`() {
-        GannetSupport.platformProblem("Mac OS X", "aarch64", "14.0")!! shouldContain "this is Mac OS X"
-        GannetSupport.platformProblem("Linux", "amd64", "5.15.0-91-generic")!! shouldContain "this is 5.15.0-91-generic"
-        GannetSupport.platformProblem("Linux", "riscv64", "6.8")!! shouldContain "riscv64"
-        GannetSupport.platformProblem("Linux", "amd64", "6.1.0").shouldBeNull()
+    fun `another OS and another architecture are each named, and an old kernel only keeps io_uring out`() {
+        GannetSupport.platformProblem("Mac OS X", "aarch64")!! shouldContain "this is Mac OS X"
+        GannetSupport.platformProblem("Linux", "riscv64")!! shouldContain "riscv64"
+        GannetSupport.platformProblem("Linux", "amd64").shouldBeNull()
+        GannetSupport.kernelProblem("5.15.0-91-generic")!! shouldContain
+            "io_uring needs Linux 6.1 or later; this is 5.15"
+        GannetSupport.kernelProblem("6.1.0").shouldBeNull()
     }
 
     @Test

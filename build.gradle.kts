@@ -43,9 +43,9 @@ version = scmVersion.version
 repositories { mavenCentral() }
 
 // The runtime reaches the JDK's own continuation, which java.base does not
-// export, and calls io_uring through FFM. Both are flags on every JVM that runs
-// it; `GannetSupport.FLAGS` names them, and `GannetSupport.problem()` says
-// which one is missing.
+// export, and calls io_uring and epoll through FFM. Both are flags on every JVM
+// that runs it, on either engine; `GannetSupport.FLAGS` names them, and
+// `GannetSupport.problem()` says which one is missing.
 val runtimeFlags =
     listOf("--enable-native-access=ALL-UNNAMED", "--add-exports", "java.base/jdk.internal.vm=ALL-UNNAMED")
 
@@ -86,6 +86,20 @@ tasks.withType<Test>().configureEach {
     systemProperty("junit.jupiter.execution.timeout.default", "5m")
     testLogging { exceptionFormat = TestExceptionFormat.FULL }
 }
+
+// The whole suite again on the epoll engine. `test` leaves `gannet.engine`
+// unset, so its servers take AUTO: io_uring where the host allows it, which
+// `GANNET_REQUIRE_URING=1` insists on.
+val testEpoll = tasks.register<Test>("testEpoll") {
+    description = "Runs the tests with every server on the epoll engine."
+    group = LifecycleBasePlugin.VERIFICATION_GROUP
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    systemProperty("gannet.engine", "EPOLL")
+    shouldRunAfter(tasks.test)
+}
+
+tasks.named("check") { dependsOn(testEpoll) }
 
 // BCV reads classes with an ASM that stops short of class file 69 (JDK 25).
 configurations.matching { it.name.startsWith("bcv-rt-jvm-cp") }.configureEach {

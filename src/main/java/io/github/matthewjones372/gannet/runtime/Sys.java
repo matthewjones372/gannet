@@ -17,7 +17,7 @@ import static java.lang.foreign.ValueLayout.JAVA_INT;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
 import static java.lang.foreign.ValueLayout.JAVA_SHORT;
 
-/** The libc calls and io_uring system calls the runtime needs, over FFM. Linux on x86-64 or arm64. */
+/** The libc calls and io_uring system calls the runtime needs, over FFM, on Linux; [Epoll] links its own. */
 final class Sys {
     private Sys() {}
 
@@ -26,11 +26,21 @@ final class Sys {
     private static final VarHandle ERRNO =
         CAPTURE.varHandle(MemoryLayout.PathElement.groupElement("errno")).withInvokeExactBehavior();
 
-    private static MethodHandle libc(String name, FunctionDescriptor descriptor, Linker.Option... options) {
+    static MethodHandle libc(String name, FunctionDescriptor descriptor, Linker.Option... options) {
         return LINKER.downcallHandle(LINKER.defaultLookup().find(name).orElseThrow(), descriptor, options);
     }
 
-    private static final Linker.Option ERRNO_OPTION = Linker.Option.captureCallState("errno");
+    /** Has a call's first argument take the errno it leaves, in memory from [errnoState]. */
+    static final Linker.Option ERRNO_OPTION = Linker.Option.captureCallState("errno");
+
+    /** Somewhere for calls made with [ERRNO_OPTION] to leave errno; [errno] reads it back. */
+    static MemorySegment errnoState(Arena arena) {
+        return arena.allocate(CAPTURE);
+    }
+
+    static int errno(MemorySegment state) {
+        return (int) ERRNO.get(state, 0L);
+    }
 
     // syscall(long number, ...): every variadic argument goes as a long, which is what glibc reads them as. It returns
     // -1 and sets errno on failure, not the kernel's negative errno.

@@ -30,12 +30,12 @@ internal class Carriers private constructor(
     }
 
     companion object {
-        fun start(config: GannetConfig, handler: HttpHandler): Carriers {
+        fun start(config: GannetConfig, handler: HttpHandler, epoll: Boolean): Carriers {
             val listeners = listen(ipv4(config.host), config.port, config.carriers, config.backlog)
             val port = Sys.localPort(listeners.first())
             val settings = Carrier.Settings(
                 config.ringEntries, config.completionEntries, config.bufferCount, config.bufferSize, config.fixedFiles,
-                config.tick.toNanos(), config.heldBuffers,
+                config.tick.toNanos(), config.heldBuffers, epoll,
             )
             val threads = listeners.mapIndexed { i, listener ->
                 val shared = Shared(config, handler)
@@ -96,5 +96,8 @@ internal fun probeRing(): String? = try {
 } catch (e: UnsupportedOperationException) {
     e.message
 }
+
+/** Null if an epoll instance can be made on this machine, else why not. */
+internal fun probeEpoll(): String? = Epoll.probe()
 
 private const val PROBE_ENTRIES = 4
