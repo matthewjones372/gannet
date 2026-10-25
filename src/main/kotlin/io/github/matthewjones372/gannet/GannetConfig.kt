@@ -7,7 +7,7 @@ import java.time.Duration
  *
  * @property host an IPv4 address or a name resolving to one.
  * @property port zero lets the kernel choose; every carrier then shares the port the first was given.
- * @property carriers platform threads, each with its own io_uring and listening socket.
+ * @property carriers platform threads, each with its own io_uring (or epoll instance) and listening socket.
  * @property maxRequestLineBytes past this a request line is answered 414.
  * @property maxHeaderBytes the request line and header fields together; past this, 431.
  * @property maxBodyBytes what [RequestBody.readAll] without a limit, and any streamed read, accepts.
@@ -38,6 +38,8 @@ import java.time.Duration
  * @property maxBufferedBytes what one connection may hold: replies queued while a send is in flight, past which its
  *   writer waits for the client to take them, and unread request bytes, past which the connection is closed.
  * @property maxHeaderCount header field lines a request may have; past this, 431.
+ * @property engine what the carriers do their I/O through: io_uring where it can, epoll where it cannot, by default.
+ *   [ringEntries], [completionEntries] and [fixedFiles] size io_uring only.
  */
 data class GannetConfig(
     val host: String = "127.0.0.1",
@@ -68,6 +70,7 @@ data class GannetConfig(
     val maxHandshakes: Int = MAX_HANDSHAKES,
     val maxBufferedBytes: Int = MAX_BUFFERED,
     val maxHeaderCount: Int = HEADER_COUNT,
+    val engine: GannetEngine = GannetEngine.AUTO,
 ) {
     init {
         require(port in 0..MAX_PORT) { "port must be in 0..$MAX_PORT, not $port" }

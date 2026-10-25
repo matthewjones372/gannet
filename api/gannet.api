@@ -5,8 +5,8 @@ public final class io/github/matthewjones372/gannet/BodyTooLargeException : java
 
 public final class io/github/matthewjones372/gannet/GannetConfig {
 	public fun <init> ()V
-	public fun <init> (Ljava/lang/String;IIIIJJLjava/time/Duration;Ljava/time/Duration;IIIIIIIILjava/time/Duration;Lio/github/matthewjones372/gannet/GannetTls;Ljava/time/Duration;Ljava/time/Duration;JLjava/time/Duration;Ljava/time/Duration;IIII)V
-	public synthetic fun <init> (Ljava/lang/String;IIIIJJLjava/time/Duration;Ljava/time/Duration;IIIIIIIILjava/time/Duration;Lio/github/matthewjones372/gannet/GannetTls;Ljava/time/Duration;Ljava/time/Duration;JLjava/time/Duration;Ljava/time/Duration;IIIIILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Ljava/lang/String;IIIIJJLjava/time/Duration;Ljava/time/Duration;IIIIIIIILjava/time/Duration;Lio/github/matthewjones372/gannet/GannetTls;Ljava/time/Duration;Ljava/time/Duration;JLjava/time/Duration;Ljava/time/Duration;IIIILio/github/matthewjones372/gannet/GannetEngine;)V
+	public synthetic fun <init> (Ljava/lang/String;IIIIJJLjava/time/Duration;Ljava/time/Duration;IIIIIIIILjava/time/Duration;Lio/github/matthewjones372/gannet/GannetTls;Ljava/time/Duration;Ljava/time/Duration;JLjava/time/Duration;Ljava/time/Duration;IIIILio/github/matthewjones372/gannet/GannetEngine;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun component1 ()Ljava/lang/String;
 	public final fun component10 ()I
 	public final fun component11 ()I
@@ -28,6 +28,7 @@ public final class io/github/matthewjones372/gannet/GannetConfig {
 	public final fun component26 ()I
 	public final fun component27 ()I
 	public final fun component28 ()I
+	public final fun component29 ()Lio/github/matthewjones372/gannet/GannetEngine;
 	public final fun component3 ()I
 	public final fun component4 ()I
 	public final fun component5 ()I
@@ -35,8 +36,8 @@ public final class io/github/matthewjones372/gannet/GannetConfig {
 	public final fun component7 ()J
 	public final fun component8 ()Ljava/time/Duration;
 	public final fun component9 ()Ljava/time/Duration;
-	public final fun copy (Ljava/lang/String;IIIIJJLjava/time/Duration;Ljava/time/Duration;IIIIIIIILjava/time/Duration;Lio/github/matthewjones372/gannet/GannetTls;Ljava/time/Duration;Ljava/time/Duration;JLjava/time/Duration;Ljava/time/Duration;IIII)Lio/github/matthewjones372/gannet/GannetConfig;
-	public static synthetic fun copy$default (Lio/github/matthewjones372/gannet/GannetConfig;Ljava/lang/String;IIIIJJLjava/time/Duration;Ljava/time/Duration;IIIIIIIILjava/time/Duration;Lio/github/matthewjones372/gannet/GannetTls;Ljava/time/Duration;Ljava/time/Duration;JLjava/time/Duration;Ljava/time/Duration;IIIIILjava/lang/Object;)Lio/github/matthewjones372/gannet/GannetConfig;
+	public final fun copy (Ljava/lang/String;IIIIJJLjava/time/Duration;Ljava/time/Duration;IIIIIIIILjava/time/Duration;Lio/github/matthewjones372/gannet/GannetTls;Ljava/time/Duration;Ljava/time/Duration;JLjava/time/Duration;Ljava/time/Duration;IIIILio/github/matthewjones372/gannet/GannetEngine;)Lio/github/matthewjones372/gannet/GannetConfig;
+	public static synthetic fun copy$default (Lio/github/matthewjones372/gannet/GannetConfig;Ljava/lang/String;IIIIJJLjava/time/Duration;Ljava/time/Duration;IIIIIIIILjava/time/Duration;Lio/github/matthewjones372/gannet/GannetTls;Ljava/time/Duration;Ljava/time/Duration;JLjava/time/Duration;Ljava/time/Duration;IIIILio/github/matthewjones372/gannet/GannetEngine;ILjava/lang/Object;)Lio/github/matthewjones372/gannet/GannetConfig;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getBacklog ()I
 	public final fun getBodyTimeout ()Ljava/time/Duration;
@@ -45,6 +46,7 @@ public final class io/github/matthewjones372/gannet/GannetConfig {
 	public final fun getCarriers ()I
 	public final fun getCompletionEntries ()I
 	public final fun getDrainBytes ()J
+	public final fun getEngine ()Lio/github/matthewjones372/gannet/GannetEngine;
 	public final fun getFixedFiles ()I
 	public final fun getHandshakeTimeout ()Ljava/time/Duration;
 	public final fun getHeadTimeout ()Ljava/time/Duration;
@@ -70,11 +72,21 @@ public final class io/github/matthewjones372/gannet/GannetConfig {
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class io/github/matthewjones372/gannet/GannetEngine : java/lang/Enum {
+	public static final field AUTO Lio/github/matthewjones372/gannet/GannetEngine;
+	public static final field EPOLL Lio/github/matthewjones372/gannet/GannetEngine;
+	public static final field IO_URING Lio/github/matthewjones372/gannet/GannetEngine;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/github/matthewjones372/gannet/GannetEngine;
+	public static fun values ()[Lio/github/matthewjones372/gannet/GannetEngine;
+}
+
 public final class io/github/matthewjones372/gannet/GannetServer : java/lang/AutoCloseable {
 	public static final field Companion Lio/github/matthewjones372/gannet/GannetServer$Companion;
-	public synthetic fun <init> (Lio/github/matthewjones372/gannet/runtime/Carriers;Ljava/lang/String;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Lio/github/matthewjones372/gannet/runtime/Carriers;Ljava/lang/String;Lio/github/matthewjones372/gannet/GannetEngine;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun awaitStopped ()V
 	public fun close ()V
+	public final fun getEngine ()Lio/github/matthewjones372/gannet/GannetEngine;
 	public final fun getHost ()Ljava/lang/String;
 	public final fun getPort ()I
 	public final fun stop ()V
@@ -89,7 +101,9 @@ public final class io/github/matthewjones372/gannet/GannetServer$Companion {
 public final class io/github/matthewjones372/gannet/GannetSupport {
 	public static final field FLAGS Ljava/lang/String;
 	public static final field INSTANCE Lio/github/matthewjones372/gannet/GannetSupport;
+	public final fun engine ()Lio/github/matthewjones372/gannet/GannetEngine;
 	public final fun problem ()Ljava/lang/String;
+	public final fun problem (Lio/github/matthewjones372/gannet/GannetEngine;)Ljava/lang/String;
 	public final fun require ()V
 }
 

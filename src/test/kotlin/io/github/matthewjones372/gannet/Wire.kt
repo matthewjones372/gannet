@@ -11,11 +11,12 @@ val testConfig = GannetConfig(
     idleTimeout = Duration.ofSeconds(20),
     stopGrace = Duration.ofSeconds(5),
     tick = Duration.ofMillis(50),
+    engine = EngineTests.engine,
 )
 
 /** Starts a server for [handler], runs [block] against it, and stops it. Unit, so a test can be its expression. */
 fun serving(config: GannetConfig = testConfig, handler: HttpHandler, block: (GannetServer) -> Unit) {
-    assumeUring()
+    assumeServer()
     val server = GannetServer.start(config, handler)
     try {
         block(server)

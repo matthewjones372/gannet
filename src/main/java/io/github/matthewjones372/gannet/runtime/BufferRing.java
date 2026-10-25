@@ -9,8 +9,9 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
 import static java.lang.foreign.ValueLayout.JAVA_SHORT;
 
 /**
- * Receive buffers the kernel picks from itself: a multishot receive takes the next free one for each arrival, and
- * the completion names it. A buffer goes back with [recycle] once its bytes are copied out.
+ * Receive buffers the engine picks from itself: a multishot receive takes the next free one for each arrival, and
+ * the completion names it. A buffer goes back with [recycle] once its bytes are copied out. io_uring reads this ring
+ * in the kernel, and [Epoll] reads the same memory as the kernel would.
  */
 final class BufferRing {
     static final int GROUP = 0;
@@ -18,7 +19,7 @@ final class BufferRing {
     private static final int UNREGISTER_PBUF_RING = 23;
     private static final VarHandle SHORT = JAVA_SHORT.varHandle();
 
-    private final Ring owner;
+    private final Engine owner;
     private final MemorySegment ring;
     private final MemorySegment reg;
     private final Sys.Mapping slab;
@@ -28,7 +29,7 @@ final class BufferRing {
     private int tail;
 
     /** [count] buffers of [size] bytes each; [count] is a power of two. */
-    BufferRing(Ring owner, Arena arena, int count, int size) {
+    BufferRing(Engine owner, Arena arena, int count, int size) {
         this.owner = owner;
         this.size = size;
         this.mask = count - 1;

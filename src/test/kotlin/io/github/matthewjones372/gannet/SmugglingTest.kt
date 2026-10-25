@@ -15,7 +15,6 @@ private val reading = HttpHandler { ex ->
  * A refused request is answered with its status and `Connection: close`, and the request behind it is never read:
  * reading on would mean guessing where it starts, which is what request smuggling exploits.
  */
-@RequiresUring
 class SmugglingTest {
     private val config = testConfig.copy(maxRequestLineBytes = 256, maxHeaderBytes = 1024, maxHeaderCount = 20)
 

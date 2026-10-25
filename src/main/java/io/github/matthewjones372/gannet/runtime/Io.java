@@ -38,7 +38,7 @@ final class Io {
         Carrier c = Carrier.current();
         Fiber f = c.current;
         // Into a free slot of the ring's file table when it has one: the result is then that slot.
-        c.ring.prep(Ring.OP_ACCEPT, 0, 0, listener, 0L, 0L, 0, 0, 0, c.fileFlag != 0 ? FILE_INDEX_ALLOC : 0,
+        c.ring.prep(Engine.OP_ACCEPT, 0, 0, listener, 0L, 0L, 0, 0, 0, c.fileFlag != 0 ? FILE_INDEX_ALLOC : 0,
             Carrier.WAKE | f.id);
         f.outstanding++;
         Fiber.park();
@@ -92,10 +92,10 @@ final class Io {
                 // The carrier's buffers ran out: one receive into a buffer of this fiber's own, so it still moves.
                 f.starved = false;
                 if (f.own == null) f.own = Arena.ofAuto().allocate(Carrier.OWN_BUFFER);
-                c.ring.prep(Ring.OP_RECV, c.fileFlag, 0, f.fd, 0L, f.own.address(), Carrier.OWN_BUFFER, 0, 0, 0,
+                c.ring.prep(Engine.OP_RECV, c.fileFlag, 0, f.fd, 0L, f.own.address(), Carrier.OWN_BUFFER, 0, 0, 0,
                     Carrier.OWN_RECV | f.id);
             } else {
-                c.ring.prep(Ring.OP_RECV, IOSQE_BUFFER_SELECT | c.fileFlag, RECV_MULTISHOT, f.fd, 0L, 0L, 0, 0,
+                c.ring.prep(Engine.OP_RECV, IOSQE_BUFFER_SELECT | c.fileFlag, RECV_MULTISHOT, f.fd, 0L, 0L, 0, 0,
                     BufferRing.GROUP, 0, Carrier.RECV | f.id);
             }
             f.recvArmed = true;
@@ -186,7 +186,7 @@ final class Io {
      */
     static void submitNow() {
         Carrier c = Carrier.current();
-        Ring ring = c.ring;
+        Engine ring = c.ring;
         if (ring.hasQueued()) ring.enter(false);
         if (ring.reap(c) > 0 && ring.hasQueued()) ring.enter(false);
     }
@@ -211,7 +211,7 @@ final class Io {
 
     /** Sends what is left of [f]'s current send. */
     static void submitSend(Carrier c, Fiber f) {
-        c.ring.prep(Ring.OP_SEND, c.fileFlag, 0, f.fd, 0L, f.sendAddress, f.sendLeft, MSG_NOSIGNAL, 0, 0,
+        c.ring.prep(Engine.OP_SEND, c.fileFlag, 0, f.fd, 0L, f.sendAddress, f.sendLeft, MSG_NOSIGNAL, 0, 0,
             Carrier.SEND | f.id);
         f.outstanding++;
     }
@@ -235,7 +235,7 @@ final class Io {
      */
     static void shutdown(Carrier c, Fiber f) {
         if (f.fd < 0 || f.zombie) return;
-        c.ring.prep(Ring.OP_SHUTDOWN, c.fileFlag, 0, f.fd, 0L, 0L, SHUT_RDWR, 0, 0, 0, Carrier.CLOSE | f.id);
+        c.ring.prep(Engine.OP_SHUTDOWN, c.fileFlag, 0, f.fd, 0L, 0L, SHUT_RDWR, 0, 0, 0, Carrier.CLOSE | f.id);
         f.outstanding++;
     }
 
@@ -248,7 +248,7 @@ final class Io {
         Carrier c = Carrier.current();
         Fiber f = c.current;
         if (f.fd < 0 || f.zombie) return;
-        c.ring.prep(Ring.OP_SHUTDOWN, c.fileFlag, 0, f.fd, 0L, 0L, SHUT_RDWR, 0, 0, 0, Carrier.WAKE | f.id);
+        c.ring.prep(Engine.OP_SHUTDOWN, c.fileFlag, 0, f.fd, 0L, 0L, SHUT_RDWR, 0, 0, 0, Carrier.WAKE | f.id);
         f.outstanding++;
         Fiber.park();
     }
@@ -258,7 +258,7 @@ final class Io {
         Carrier c = Carrier.current();
         Fiber f = c.current;
         boolean fixed = c.fileFlag != 0;
-        c.ring.prep(Ring.OP_CLOSE, 0, 0, fixed ? 0 : fd, 0L, 0L, 0, 0, 0, fixed ? fd + 1 : 0, Carrier.CLOSE | f.id);
+        c.ring.prep(Engine.OP_CLOSE, 0, 0, fixed ? 0 : fd, 0L, 0L, 0, 0, 0, fixed ? fd + 1 : 0, Carrier.CLOSE | f.id);
         f.outstanding++;
     }
 
@@ -276,7 +276,7 @@ final class Io {
         }
         if (f.recvArmed) {
             // Hard-linked, so the close runs after the shutdown even when the shutdown fails.
-            c.ring.prep(Ring.OP_SHUTDOWN, c.fileFlag | IOSQE_IO_HARDLINK, 0, fd, 0L, 0L, SHUT_RDWR, 0, 0, 0,
+            c.ring.prep(Engine.OP_SHUTDOWN, c.fileFlag | IOSQE_IO_HARDLINK, 0, fd, 0L, 0L, SHUT_RDWR, 0, 0, 0,
                 Carrier.CLOSE | f.id);
             f.outstanding++;
         }

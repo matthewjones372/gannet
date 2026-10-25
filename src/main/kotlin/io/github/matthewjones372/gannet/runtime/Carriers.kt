@@ -31,7 +31,7 @@ internal class Carriers private constructor(
     }
 
     companion object {
-        fun start(config: GannetConfig, handler: HttpHandler): Carriers {
+        fun start(config: GannetConfig, handler: HttpHandler, epoll: Boolean): Carriers {
             val listeners = listen(ipv4(config.host), config.port, config.carriers, config.backlog)
             val port = Sys.localPort(listeners.first())
             val settings = Carrier.Settings(
@@ -39,6 +39,7 @@ internal class Carriers private constructor(
                 config.tick.toNanos(), config.heldBuffers, config.maxConnections,
                 // Only TLS connections have a handshake worth capping.
                 if (config.tls != null) config.maxHandshakes else Int.MAX_VALUE,
+                epoll,
             )
             val open = AtomicInteger()
             val threads = listeners.mapIndexed { i, listener ->
@@ -100,5 +101,8 @@ internal fun probeRing(): String? = try {
 } catch (e: UnsupportedOperationException) {
     e.message
 }
+
+/** Null if an epoll instance can be made on this machine, else why not. */
+internal fun probeEpoll(): String? = Epoll.probe()
 
 private const val PROBE_ENTRIES = 4

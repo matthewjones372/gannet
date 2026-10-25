@@ -17,7 +17,9 @@ permissions:
 jobs:
   build:
     # A GitHub-hosted VM rather than a container: Docker's default seccomp
-    # profile refuses `io_uring_setup` with EPERM, and these tests need it.
+    # profile refuses `io_uring_setup` with EPERM, and the io_uring run needs
+    # it. `build` runs the suite twice through `check`: `test` on io_uring, and
+    # `testEpoll` with every server on epoll.
     runs-on: ubuntu-latest
 
     env:
@@ -43,7 +45,7 @@ jobs:
           uname -r
           cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo "no io_uring_disabled sysctl"
 
-      - name: Build and test
+      - name: Build and test on io_uring and on epoll
         run: ./gradlew build --stacktrace
 
       # The suites bind real sockets and assert on delivery, so a failure is
@@ -57,6 +59,35 @@ jobs:
             build/reports/tests/
             build/test-results/
           retention-days: 7
+
+  # The suite inside a container under Docker's default seccomp profile, which
+  # refuses io_uring: AUTO has to fall back to epoll, and the servers run there.
+  # `GANNET_EXPECT_ENGINE` makes a test fail if AUTO picked anything else.
+  seccomp-fallback:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Test inside Docker's default seccomp profile
+        run: |
+          # As the runner's own user, so the checkout's owner matches and the
+          # build's files stay removable; Gradle's home goes in the workspace.
+          docker run --rm -v "$PWD":/work -w /work --user "$(id -u):$(id -g)" \
+            -e GANNET_EXPECT_ENGINE=EPOLL -e GRADLE_USER_HOME=/work/.gradle-home -e HOME=/tmp \
+            eclipse-temurin:25-jdk \
+            ./gradlew test --stacktrace
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: seccomp-test-reports
+          path: |
+            build/reports/tests/
+            build/test-results/
 
   # A minute of fuzzing for each target, beside the build rather than in it, so the build's own result never depends
   # on what a fuzzer happens to try. A finding here is a real invariant broken: its input is uploaded, and committing

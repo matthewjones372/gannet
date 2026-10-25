@@ -8,20 +8,11 @@ import static java.lang.foreign.ValueLayout.JAVA_INT;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
 
 /**
- * One io_uring, owned by the thread that made it: submissions are queued with [prep] and sent, with completions
- * collected, by [enter]. Set up single-issuer with deferred task work, so completions are only processed when that
- * thread asks for them, never on an interrupt.
+ * One io_uring, the fast [Engine], owned by the thread that made it: submissions are queued with [prep] and sent,
+ * with completions collected, by [enter]. Set up single-issuer with deferred task work, so completions are only
+ * processed when that thread asks for them, never on an interrupt.
  */
-final class Ring {
-    static final byte OP_TIMEOUT = 11;
-    static final byte OP_ACCEPT = 13;
-    static final byte OP_ASYNC_CANCEL = 14;
-    static final byte OP_CLOSE = 19;
-    static final byte OP_READ = 22;
-    static final byte OP_SEND = 26;
-    static final byte OP_RECV = 27;
-    static final byte OP_SHUTDOWN = 34;
-
+final class Ring extends Engine {
     private static final int SETUP_CQSIZE = 1 << 3;
     private static final int SETUP_SINGLE_ISSUER = 1 << 12;
     private static final int SETUP_DEFER_TASKRUN = 1 << 13;
@@ -111,15 +102,7 @@ final class Ring {
         };
     }
 
-    /** Queues one submission; it reaches the kernel at the next [enter]. */
-    void prep(byte op, int fd, long addr, int len, int opFlags, long userData) {
-        prep(op, 0, 0, fd, 0L, addr, len, opFlags, 0, 0, userData);
-    }
-
-    /**
-     * [prep] with the submission's own flags, its ioprio field, its offset, a provided-buffer group and a fixed-file
-     * index (for an accept or close of a direct descriptor).
-     */
+    @Override
     void prep(byte op, int sqeFlags, int ioprio, int fd, long off, long addr, int len, int opFlags, int bufGroup,
               int fileIndex, long userData) {
         // The kernel's head is read only when the last value seen says the ring may be full.
@@ -144,12 +127,12 @@ final class Ring {
         queued++;
     }
 
-    /** Whether submissions are queued that the kernel has not yet been given. */
+    @Override
     boolean hasQueued() {
         return queued > 0;
     }
 
-    /** Sends what is queued and processes completions, waiting for at least one when [wait]. */
+    @Override
     void enter(boolean wait) {
         INT.setRelease(sq, sqTail, tail);
         int submitting = queued;
@@ -165,14 +148,7 @@ final class Ring {
         }
     }
 
-    /** io_uring_register: [opcode] with [arg] and [count]; throws if the kernel refuses. */
-    void register(int opcode, MemorySegment arg, int count) {
-        if (tryRegister(opcode, arg, count) < 0) {
-            throw new UnsupportedOperationException("io_uring_register " + opcode + " was refused");
-        }
-    }
-
-    /** io_uring_register's result: what it returns, or -1 when it fails. */
+    @Override
     long tryRegister(int opcode, MemorySegment arg, int count) {
         try {
             return (long) Sys.SYSCALL7.invokeExact(Sys.IO_URING_REGISTER, (long) fd, (long) opcode, arg.address(),
@@ -186,6 +162,7 @@ final class Ring {
      * A sparse table of [count] direct descriptors, which accepts fill and which receives and sends then name by
      * index, sparing the kernel a descriptor lookup and reference per request. False if the kernel refuses it.
      */
+    @Override
     boolean registerFiles(int count) {
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment reg = arena.allocate(32); // struct io_uring_rsrc_register: nr, flags, resv2, data, tags
@@ -195,11 +172,7 @@ final class Ring {
         }
     }
 
-    interface Completions {
-        void complete(long userData, int result, int flags);
-    }
-
-    /** Hands every completion the kernel has posted to [to], and says how many there were. */
+    @Override
     int reap(Completions to) {
         int end = (int) INT.getAcquire(cq, cqTail);
         int h = head;
@@ -215,6 +188,7 @@ final class Ring {
     }
 
     /** Ends the ring: the kernel cancels what is still in flight and drops its direct descriptors. */
+    @Override
     void close() {
         Sys.munmap(sqes.address(), sqes.byteSize());
         if (cq != sq) Sys.munmap(cq.address(), cq.byteSize());

@@ -13,11 +13,12 @@ import java.util.function.IntConsumer;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
 
 /**
- * One core's runtime: a platform thread with its own io_uring and its own listening socket. It runs every fiber that
+ * One core's runtime: a platform thread with its own [Engine] (an io_uring, or epoll where that is refused) and its own
+ * listening socket. It runs every fiber that
  * is ready, then sends all their queued I/O in one system call and collects what has completed, and again. A fiber
  * never leaves the carrier that started it; other threads reach one only through [execute].
  */
-final class Carrier extends Thread implements Ring.Completions {
+final class Carrier extends Thread implements Engine.Completions {
     // A request's user_data: the fiber's id in the low 32 bits, what the request was above it.
     static final long WAKE = 0L;
     static final long RECV = 1L << 32;
@@ -38,9 +39,9 @@ final class Carrier extends Thread implements Ring.Completions {
     static final int SEND_RING = 2 << 20;
     static final int OWN_BUFFER = 16 << 10;
 
-    /** How a carrier is sized; see `GannetConfig` for what each means. */
+    /** How a carrier is sized, and whether it runs on [Epoll] rather than io_uring; see `GannetConfig`. */
     record Settings(int ringEntries, int completionEntries, int bufferCount, int bufferSize, int fixedFiles,
-                    long tickNanos, int heldBuffers, int maxConnections, int maxHandshakes) {}
+                    long tickNanos, int heldBuffers, int maxConnections, int maxHandshakes, boolean epoll) {}
 
     private final int listener;
     private final Settings settings;
@@ -71,7 +72,7 @@ final class Carrier extends Thread implements Ring.Completions {
     private boolean listenerClosed;
 
     private Arena arena;
-    Ring ring;
+    Engine ring;
     final SendSlots slots = new SendSlots();
     private Sys.Mapping sendRingMapping;
     /**
@@ -134,9 +135,9 @@ final class Carrier extends Thread implements Ring.Completions {
     }
 
     private void open() {
-        // Made here: a single-issuer ring belongs to the thread that creates it.
+        // Made here: a single-issuer ring, like an epoll engine, belongs to the thread that creates it.
         arena = Arena.ofConfined();
-        ring = new Ring(settings.ringEntries(), settings.completionEntries());
+        ring = settings.epoll() ? new Epoll() : new Ring(settings.ringEntries(), settings.completionEntries());
         buffers = new BufferRing(ring, arena, settings.bufferCount(), settings.bufferSize());
         if (settings.fixedFiles() > 0 && ring.registerFiles(settings.fixedFiles())) fileFlag = 1;
         sendRingMapping = Sys.hugeSlab(SEND_RING);
@@ -224,8 +225,8 @@ final class Carrier extends Thread implements Ring.Completions {
      */
     private void quiesce() {
         exiting = true;
-        if (eventArmed) ring.prep(Ring.OP_ASYNC_CANCEL, 0, 0, -1, 0L, EVENT, 0, 0, 0, 0, QUIET);
-        if (tickArmed) ring.prep(Ring.OP_ASYNC_CANCEL, 0, 0, -1, 0L, TICK, 0, 0, 0, 0, QUIET);
+        if (eventArmed) ring.prep(Engine.OP_ASYNC_CANCEL, 0, 0, -1, 0L, EVENT, 0, 0, 0, 0, QUIET);
+        if (tickArmed) ring.prep(Engine.OP_ASYNC_CANCEL, 0, 0, -1, 0L, TICK, 0, 0, 0, 0, QUIET);
         while (eventArmed || tickArmed) {
             ring.enter(true);
             ring.reap(this);
@@ -321,7 +322,7 @@ final class Carrier extends Thread implements Ring.Completions {
         stopping = true;
         deadline = System.nanoTime() + graceNanos;
         if (acceptorInAccept) {
-            ring.prep(Ring.OP_ASYNC_CANCEL, 0, 0, -1, 0L, WAKE | acceptor.id, 0, 0, 0, 0, QUIET);
+            ring.prep(Engine.OP_ASYNC_CANCEL, 0, 0, -1, 0L, WAKE | acceptor.id, 0, 0, 0, 0, QUIET);
         } else if (tickSleeper != null) {
             ready.add(tickSleeper);
             tickSleeper = null;
@@ -354,12 +355,12 @@ final class Carrier extends Thread implements Ring.Completions {
 
     private void armEvent() {
         eventArmed = true;
-        ring.prep(Ring.OP_READ, 0, 0, eventFd, 0L, eventBuffer.address(), 8, 0, 0, 0, EVENT);
+        ring.prep(Engine.OP_READ, 0, 0, eventFd, 0L, eventBuffer.address(), 8, 0, 0, 0, EVENT);
     }
 
     private void armTick() {
         tickArmed = true;
-        ring.prep(Ring.OP_TIMEOUT, 0, 0, -1, 0L, tickSpec.address(), 1, 0, 0, 0, TICK);
+        ring.prep(Engine.OP_TIMEOUT, 0, 0, -1, 0L, tickSpec.address(), 1, 0, 0, 0, TICK);
     }
 
     @Override
@@ -417,7 +418,7 @@ final class Carrier extends Thread implements Ring.Completions {
             // receive leaves the rest in the kernel, whose window then slows the sender.
             if (more && f.arrivalCount >= settings.heldBuffers() && !f.recvCancelling) {
                 f.recvCancelling = true;
-                ring.prep(Ring.OP_ASYNC_CANCEL, 0, 0, -1, 0L, RECV | f.id, 0, 0, 0, 0, CANCEL | f.id);
+                ring.prep(Engine.OP_ASYNC_CANCEL, 0, 0, -1, 0L, RECV | f.id, 0, 0, 0, 0, CANCEL | f.id);
                 f.outstanding++;
             }
         }

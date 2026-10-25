@@ -24,14 +24,21 @@ All notable changes to Gannet are recorded here. Gannet is experimental, and unt
   `maxHandshakes` per carrier (both stop accepting at the cap, leaving new connections in the listen backlog), and
   `maxBufferedBytes` per connection (queued replies past it make the writer wait; unread request bytes past it close
   the connection).
-
 - `GannetConfig.maxHeaderCount` (default 100): a request with more header field lines is answered 431.
 - Fuzz targets for the request-head parser, the chunked decoder and a whole connection's input (Jazzer), replayed by
   `test` and fuzzed by the `fuzz` task and a CI smoke step; RFC 9112 conformance and request-smuggling tests.
+- An epoll engine, so Gannet runs where io_uring is blocked (Docker's default seccomp profile,
+  `kernel.io_uring_disabled`) or the kernel is older than 6.1. `GannetConfig.engine` takes a `GannetEngine`: `AUTO`
+  (the default) runs on io_uring where it can and falls back to epoll where it cannot, logging the choice and its
+  reason once at `INFO`; `IO_URING` and `EPOLL` insist on one. `GannetServer.engine` says which one a server runs on,
+  `GannetSupport.engine()` which one `AUTO` picks here, and `GannetSupport.problem(engine)` what stops a given one.
+  The epoll engine keeps the carrier-per-core, continuation-per-connection model, TLS, backpressure, timeouts,
+  graceful stop and port zero. io_uring stays the faster engine. The epoll path is new.
+- `./gradlew check` runs the whole suite on both engines: `test` on `AUTO`, and `testEpoll` with every server on epoll.
 
 ### Changed
 
-- `GannetConfig` has new last parameters, `tls`, the limits and `maxHeaderCount` after it, and
+- `GannetConfig` has new last parameters, `tls`, the limits, `maxHeaderCount` and `engine` after it, and
   `streamHighWatermark` after `heldBuffers`, so its constructor and `copy` signatures changed.
 - `idleTimeout` now covers only a connection with nothing of a request read. A head, a body, a reply and a TLS
   handshake each have their own timeout, and a reply's counts from the client's last progress, not from the write.
@@ -42,6 +49,9 @@ All notable changes to Gannet are recorded here. Gannet is experimental, and unt
   producer faster than one carrier round trip per piece is no longer held to that pace: 64-byte frames from another
   thread went from about 21 µs to under 2 µs each on loopback. `GannetConfig` gains that parameter, after
   `heldBuffers`.
+- `GannetSupport.problem()` now reports a problem only when no engine can run: where io_uring is refused but epoll
+  works, it is null. Linux older than 6.1 is no longer a problem by itself; it keeps io_uring out, and the server runs
+  on epoll.
 
 ### Fixed
 

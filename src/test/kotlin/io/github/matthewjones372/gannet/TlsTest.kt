@@ -136,7 +136,7 @@ class TlsTest {
 
     @Test
     fun `stop closes a connection still waiting for its handshake`() {
-        assumeUring()
+        assumeServer()
         val server = GannetServer.start(tlsConfig, echo)
         Raw(server.port).use { raw ->
             tlsRaw(server.port).use { it.send(get("/")).read().status shouldBe 200 }

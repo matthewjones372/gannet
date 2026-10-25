@@ -38,7 +38,7 @@ class LifecycleTest {
 
     @Test
     fun `a chosen port is bound, and a port another socket holds is refused`() {
-        assumeUring()
+        assumeServer()
         val free = ServerSocket(0).use { it.localPort }
         val server = GannetServer.start(testConfig.copy(port = free)) { it.respond(200) }
         server.port shouldBe free
@@ -52,7 +52,7 @@ class LifecycleTest {
 
     @Test
     fun `stop closes idle connections, joins every carrier and refuses new ones`() {
-        assumeUring()
+        assumeServer()
         val server = GannetServer.start(testConfig) { it.respond(200) }
         val port = server.port
         carrierThreads(port) shouldHaveSize 2
@@ -68,7 +68,7 @@ class LifecycleTest {
 
     @Test
     fun `stop lets an exchange in progress finish, and closes its connection after`() {
-        assumeUring()
+        assumeServer()
         val gate = CountDownLatch(1)
         val started = CountDownLatch(1)
         val server = GannetServer.start(testConfig) { ex ->
@@ -94,7 +94,7 @@ class LifecycleTest {
 
     @Test
     fun `stop closes what is still running once its grace runs out`() {
-        assumeUring()
+        assumeServer()
         val never = CountDownLatch(1)
         val started = CountDownLatch(1)
         val server = GannetServer.start(testConfig) { ex ->
@@ -116,7 +116,7 @@ class LifecycleTest {
 
     @Test
     fun `stop ends a stream held by a reader that never reads`() {
-        assumeUring()
+        assumeServer()
         val server = GannetServer.start(testConfig.copy(stopGrace = Duration.ofMillis(100))) { ex ->
             ex.stream(200).use { out -> repeat(10_000) { out.write(ByteArray(64 * 1024)) } }
         }
@@ -130,7 +130,7 @@ class LifecycleTest {
 
     @Test
     fun `a handler can stop its own server`() {
-        assumeUring()
+        assumeServer()
         lateinit var server: GannetServer
         server = GannetServer.start(testConfig) { ex ->
             ex.respond(200, body = "bye".toByteArray())
@@ -158,7 +158,7 @@ class LifecycleTest {
 
     @Test
     fun `stop waits for a thread blocked in awaitStopped`() {
-        assumeUring()
+        assumeServer()
         val server = GannetServer.start(testConfig) { it.respond(200) }
         val waiter = Thread.ofPlatform().start { server.awaitStopped() }
         waiter.join(100)
@@ -179,7 +179,7 @@ class LifecycleTest {
 
     @Test
     fun `an IPv6 host is refused`() {
-        assumeUring()
+        assumeServer()
         shouldThrow<IllegalArgumentException> { GannetServer.start(testConfig.copy(host = "::1")) { it.respond(200) } }
             .message!! shouldContain "IPv4"
     }
