@@ -37,7 +37,7 @@ internal class UringExchange(val conn: Connection, val head: Head) : HttpExchang
     private var bodyless = false
     private val isHead = head.method == "HEAD"
 
-    val reader = BodyReader(conn, this)
+    val reader = BodyReader(conn, head)
 
     override val request = HttpRequest(
         head.method, head.target, head.path, head.query, head.version, head.headers, Body(this),
@@ -191,10 +191,10 @@ internal class UringExchange(val conn: Connection, val head: Head) : HttpExchang
 }
 
 /** The body as the fiber reads it off the connection: framing, limits, `100-continue` and the drain. */
-internal class BodyReader(private val conn: Connection, private val ex: UringExchange) {
+internal class BodyReader(private val input: Inbound, private val head: Head) {
     private enum class Chunk { SIZE, DATA, DATA_END, TRAILERS }
 
-    private val framing = ex.head.framing
+    private val framing = head.framing
 
     /** Set from any thread by [RequestBody.fail]. */
     @Volatile
@@ -256,16 +256,15 @@ internal class BodyReader(private val conn: Connection, private val ex: UringExc
     }
 
     private fun askToContinue() {
-        if (!ex.head.expectContinue || continueSent) return
-        if (ex.phase != Phase.OPEN) throw IOException("The reply was sent before the body was asked for")
+        if (!head.expectContinue || continueSent) return
+        input.sendContinue()
         continueSent = true
-        conn.out.put(CONTINUE)
     }
 
     private fun readFixed(into: ByteArray, offset: Int, length: Int): Int {
-        if (conn.buffered() == 0) conn.fillBody()
-        val n = minOf(length.toLong(), remaining, conn.buffered().toLong()).toInt()
-        conn.take(into, offset, n)
+        if (input.buffered() == 0) input.fillBody()
+        val n = minOf(length.toLong(), remaining, input.buffered().toLong()).toInt()
+        input.take(into, offset, n)
         remaining -= n
         if (remaining == 0L) done = true
         return n
@@ -288,28 +287,38 @@ internal class BodyReader(private val conn: Connection, private val ex: UringExc
     }
 
     private fun chunkSize() {
-        val line = conn.line(MAX_CHUNK_LINE) ?: throw MalformedBodyException("A chunk size line is too long")
-        val digits = line.substringBefore(';').trim()
-        if (digits.isEmpty() || digits.length > MAX_HEX_DIGITS || !digits.all { Character.digit(it, HEX) >= 0 }) {
-            throw MalformedBodyException("Bad chunk size")
-        }
-        remaining = digits.toLong(HEX)
-        state = if (remaining == 0L) Chunk.TRAILERS else Chunk.DATA
+        val lf = input.lineEnd(MAX_CHUNK_LINE)
+        if (lf < 0) throw MalformedBodyException("A chunk size line is too long")
+        val size = chunkSize(input.bytes, input.position, lf)
+        if (size < 0) throw MalformedBodyException("Bad chunk size line")
+        input.skipTo(lf + 1)
+        remaining = size
+        state = if (size == 0L) Chunk.TRAILERS else Chunk.DATA
     }
 
     private fun chunkEnd() {
-        if (conn.line(0) == null) throw MalformedBodyException("A chunk does not end with CR LF")
+        val lf = input.lineEnd(1)
+        if (lf != input.position + 1 || input.bytes[input.position] != CR) {
+            throw MalformedBodyException("A chunk does not end with CR LF")
+        }
+        input.skipTo(lf + 1)
         state = Chunk.SIZE
     }
 
-    /** Reads trailer fields up to the empty line, and throws them away; true at that line. */
+    /** Reads trailer fields up to the empty line, checks them, and throws them away; true at that line. */
     private fun trailers(): Boolean {
+        val max = input.maxHeaderBytes
         var read = 0
         while (true) {
-            val line = conn.line(conn.maxHeaderBytes) ?: throw MalformedBodyException("The trailer fields are too long")
-            if (line.isEmpty()) break
-            read += line.length
-            if (read > conn.maxHeaderBytes) throw MalformedBodyException("The trailer fields are too long")
+            val lf = input.lineEnd(max - read)
+            if (lf < 0) throw MalformedBodyException("The trailer fields are too long")
+            val from = input.position
+            val b = input.bytes
+            if (lf == from || b[lf - 1] != CR) throw MalformedBodyException("A trailer line does not end with CR LF")
+            input.skipTo(lf + 1)
+            if (lf - 1 == from) break
+            if (!isFieldLine(b, from, lf - 1)) throw MalformedBodyException("Bad trailer field")
+            read += lf + 1 - from
         }
         done = true
         return true
@@ -337,7 +346,7 @@ internal class BodyReader(private val conn: Connection, private val ex: UringExc
     fun mustClose(budget: Long): Boolean = when {
         done -> false
         broken || (failure != null && failure !is BodyTooLargeException) -> true
-        ex.head.expectContinue && !continueSent -> true
+        head.expectContinue && !continueSent -> true
         else -> framing is Framing.Fixed && remaining > budget
     }
 
@@ -346,8 +355,6 @@ internal class BodyReader(private val conn: Connection, private val ex: UringExc
         const val MAX_ARRAY = Int.MAX_VALUE - 16L
         const val FIRST_ARRAY = 1L shl 20
         const val MAX_CHUNK_LINE = 1024
-        const val MAX_HEX_DIGITS = 15
-        const val HEX = 16
     }
 }
 

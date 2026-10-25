@@ -40,9 +40,12 @@ private class Refusal(val status: Int, reason: String) : RuntimeException(reason
 
 private fun refuse(status: Int, reason: String): Nothing = throw Refusal(status, reason)
 
-/** A request head from [b] between [from] and [to], within [maxLine] for the request line and [maxHead] in all. */
-internal fun parseHead(b: ByteArray, from: Int, to: Int, maxLine: Int, maxHead: Int): Parse = try {
-    readHead(b, from, to, maxLine, maxHead)
+/**
+ * A request head from [b] between [from] and [to], within [maxLine] for the request line, [maxHead] in all and
+ * [maxFields] header fields.
+ */
+internal fun parseHead(b: ByteArray, from: Int, to: Int, maxLine: Int, maxHead: Int, maxFields: Int): Parse = try {
+    readHead(b, from, to, maxLine, maxHead, maxFields)
 } catch (r: Refusal) {
     Parse.Refused(r.status, r.message.orEmpty())
 }
@@ -64,17 +67,23 @@ private fun lineEndingAt(b: ByteArray, at: Int, to: Int): Int = when {
     else -> 0
 }
 
-private fun readHead(b: ByteArray, from: Int, to: Int, maxLine: Int, maxHead: Int): Parse {
+private fun readHead(b: ByteArray, from: Int, to: Int, maxLine: Int, maxHead: Int, maxFields: Int): Parse {
     val lineEnd = lineEnd(b, from, to, maxLine, URI_TOO_LONG) ?: return Parse.Incomplete
     val line = requestLine(b, from, contentEnd(b, from, lineEnd))
-    val headLimit = from + maxHead
+    // Saturated, so a limit near Int.MAX_VALUE cannot wrap around to a negative index.
+    val headLimit = if (maxHead >= Int.MAX_VALUE - 1 - from) Int.MAX_VALUE - 1 else from + maxHead
     var at = lineEnd + 1
     var bodyStart = -1
     val fields = buildList {
         while (bodyStart < 0) {
             val end = lineEnd(b, at, minOf(to, headLimit + 1), headLimit - at, HEADERS_TOO_LARGE) ?: break
             val content = contentEnd(b, at, end)
-            if (content == at) bodyStart = end + 1 else add(field(b, at, content))
+            if (content == at) {
+                bodyStart = end + 1
+            } else {
+                if (size == maxFields) refuse(HEADERS_TOO_LARGE, "More than $maxFields header fields")
+                add(field(b, at, content))
+            }
             at = end + 1
         }
     }
@@ -85,7 +94,7 @@ private fun readHead(b: ByteArray, from: Int, to: Int, maxLine: Int, maxHead: In
 
 /** The index of the line feed ending the line at [from], or null if it has not arrived; refuses past [max] bytes. */
 private fun lineEnd(b: ByteArray, from: Int, to: Int, max: Int, status: Int): Int? {
-    val limit = minOf(to, from + max + 2)
+    val limit = if (max >= to - from - 2) to else from + max + 2
     val lf = Scan.indexOf(b, LF.toInt(), from, maxOf(from, limit))
     if (lf >= 0 && contentEnd(b, from, lf) - from <= max) return lf
     if (lf >= 0 || to - from > max + 1) refuse(status, "A line of the request head is longer than $max bytes")
@@ -118,6 +127,15 @@ private fun version(b: ByteArray, from: Int, end: Int): HttpVersion {
     return if (b[from + MINOR] == '0'.code.toByte()) HttpVersion.HTTP_1_0 else HttpVersion.HTTP_1_1
 }
 
+/** Whether [b] from [from] to [end] is a well-formed field line, as a trailer field must be. */
+internal fun isFieldLine(b: ByteArray, from: Int, end: Int): Boolean {
+    val colon = Scan.indexOf(b, ':'.code, from, end)
+    if (colon <= from) return false
+    for (i in from until colon) if (!isTokenByte(b[i])) return false
+    for (i in colon + 1 until end) if (!isValueByte(b[i])) return false
+    return true
+}
+
 private fun field(b: ByteArray, from: Int, end: Int): Pair<String, String> {
     if (isBlank(b[from])) refuse(BAD_REQUEST, "Obsolete line folding")
     val colon = Scan.indexOf(b, ':'.code, from, end)
@@ -141,6 +159,7 @@ private fun frame(line: Line, headers: Headers): Head {
     val hosts = headers.all("host")
     if (hosts.size > 1) refuse(BAD_REQUEST, "More than one Host")
     if (hosts.isEmpty() && line.version == HttpVersion.HTTP_1_1) refuse(BAD_REQUEST, "No Host")
+    if (hosts.isNotEmpty() && !isHost(hosts[0], allowEmpty = true)) refuse(BAD_REQUEST, "Bad Host")
     val (path, query) = split(line.method, line.target)
     val connection = tokens(headers.all("connection"))
     val keepAlive = "close" !in connection &&
@@ -161,6 +180,9 @@ private fun split(method: String, target: String): Pair<String, String?> {
         target.startsWith("http://", ignoreCase = true) || target.startsWith("https://", ignoreCase = true) -> {
             val authority = target.indexOf("://") + SCHEME_SEPARATOR
             val rest = target.indexOfAny(charArrayOf('/', '?'), authority)
+            if (!isHost(target, allowEmpty = false, authority, if (rest < 0) target.length else rest)) {
+                refuse(BAD_REQUEST, "Bad authority in the request target")
+            }
             if (rest < 0) "/" to null else pathAndQuery(target.substring(rest).let { if (it[0] == '?') "/$it" else it })
         }
 
@@ -175,7 +197,7 @@ private fun pathAndQuery(target: String): Pair<String, String?> {
 
 private fun framing(version: HttpVersion, headers: Headers): Framing {
     val codings = tokens(headers.all("transfer-encoding"))
-    val lengths = headers.all("content-length").flatMap { it.split(',') }.map { it.trim() }.distinct()
+    val lengths = headers.all("content-length").flatMap { it.split(',') }.map { it.trimOws() }.distinct()
     if (codings.isNotEmpty() || "transfer-encoding" in headers) {
         if (version == HttpVersion.HTTP_1_0) refuse(BAD_REQUEST, "Transfer-Encoding in an HTTP/1.0 request")
         if (lengths.isNotEmpty()) refuse(BAD_REQUEST, "Both Content-Length and Transfer-Encoding")
@@ -200,9 +222,53 @@ private fun expectsContinue(version: HttpVersion, headers: Headers): Boolean {
     return true
 }
 
-/** The comma-separated tokens of [values], trimmed and lower-cased. */
+/**
+ * The comma-separated tokens of [values], trimmed of spaces and tabs and lower-cased as ASCII. Only ASCII is folded: a
+ * Unicode case mapping turns the Kelvin sign into `k`, and so `chun\u212Aed` into `chunked`.
+ */
 internal fun tokens(values: List<String>): List<String> =
-    values.flatMap { it.split(',') }.map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+    values.flatMap { it.split(',') }.map { it.trimOws().asciiLowercase() }.filter { it.isNotEmpty() }
+
+/** Without the spaces and tabs around it: Kotlin's `trim` also takes Unicode spaces, which no field value has. */
+private fun String.trimOws(): String {
+    var start = 0
+    var stop = length
+    while (start < stop && (this[start] == ' ' || this[start] == '\t')) start++
+    while (stop > start && (this[stop - 1] == ' ' || this[stop - 1] == '\t')) stop--
+    return if (start == 0 && stop == length) this else substring(start, stop)
+}
+
+private fun String.asciiLowercase(): String = if (none { it in 'A'..'Z' }) {
+    this
+} else {
+    String(CharArray(length) { this[it].let { c -> if (c in 'A'..'Z') c + ('a' - 'A') else c } })
+}
+
+/**
+ * RFC 9110 `uri-host [ ":" port ]`: a registered name or IPv4 address of unreserved, percent-encoded and sub-delimiter
+ * characters, or a bracketed IP literal. A Host field may be empty; an `http` URI's authority may not.
+ */
+internal fun isHost(s: String, allowEmpty: Boolean, from: Int = 0, to: Int = s.length): Boolean {
+    if (from == to) return allowEmpty
+    val nameEnd = hostNameEnd(s, from, to)
+    return nameEnd in from + 1..to && (nameEnd == to || (s[nameEnd] == ':' && s.allIn(nameEnd + 1, to, DIGITS)))
+}
+
+/** Where the name or IP literal starting a host at [from] ends, or -1 if it is neither. */
+private fun hostNameEnd(s: String, from: Int, to: Int): Int {
+    if (s[from] == '[') {
+        val close = s.indexOf(']', from)
+        return if (close in from + 2 until to && s.allIn(from + 1, close, IP_LITERAL)) close + 1 else -1
+    }
+    val colon = s.lastIndexOf(':', to - 1)
+    val end = if (colon < from) to else colon
+    return if (s.allIn(from, end, REG_NAME)) end else -1
+}
+
+private fun String.allIn(from: Int, to: Int, set: BooleanArray): Boolean {
+    for (i in from until to) if (!this[i].isIn(set)) return false
+    return true
+}
 
 /** RFC 9110 `tchar`: what a method or field name is spelled with. */
 internal fun isTokenByte(c: Byte): Boolean {
@@ -227,6 +293,7 @@ internal const val LF: Byte = 10
 private const val SP: Byte = 32
 private const val HTAB: Byte = 9
 private const val BYTE_MASK = 0xFF
+private const val ASCII = 128
 private const val VISIBLE_START = 0x21
 private const val VISIBLE_END = 0x7E
 private const val VERSION_LENGTH = 8
@@ -236,6 +303,18 @@ private const val SCHEME_SEPARATOR = 3
 private const val MAX_LENGTH_DIGITS = 18
 private const val TOKEN_MARKS = "!#$%&'*+-.^_`|~"
 private const val NOT_IN_URI = "\"<>\\^`{|}"
+private val REG_NAME = asciiSet("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~%!$&'()*+,;=")
+private val IP_LITERAL = asciiSet("0123456789abcdefABCDEFvV:.-_~!$&'()*+,;=")
+private val DIGITS = asciiSet("0123456789")
+
+private fun asciiSet(chars: String): BooleanArray = BooleanArray(ASCII).also { set ->
+    chars.forEach {
+        set[it.code] =
+            true
+    }
+}
+
+private fun Char.isIn(set: BooleanArray): Boolean = code < ASCII && set[code]
 private val HTTP_SLASH = "HTTP/".toByteArray(Charsets.US_ASCII)
 
 internal const val BAD_REQUEST = 400

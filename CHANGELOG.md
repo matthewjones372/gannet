@@ -25,10 +25,14 @@ All notable changes to Gannet are recorded here. Gannet is experimental, and unt
   `maxBufferedBytes` per connection (queued replies past it make the writer wait; unread request bytes past it close
   the connection).
 
+- `GannetConfig.maxHeaderCount` (default 100): a request with more header field lines is answered 431.
+- Fuzz targets for the request-head parser, the chunked decoder and a whole connection's input (Jazzer), replayed by
+  `test` and fuzzed by the `fuzz` task and a CI smoke step; RFC 9112 conformance and request-smuggling tests.
+
 ### Changed
 
-- `GannetConfig` has new last parameters, `tls` and the limits after it, and `streamHighWatermark` after
-  `heldBuffers`, so its constructor and `copy` signatures changed.
+- `GannetConfig` has new last parameters, `tls`, the limits and `maxHeaderCount` after it, and
+  `streamHighWatermark` after `heldBuffers`, so its constructor and `copy` signatures changed.
 - `idleTimeout` now covers only a connection with nothing of a request read. A head, a body, a reply and a TLS
   handshake each have their own timeout, and a reply's counts from the client's last progress, not from the write.
 - A streamed reply's `ResponseStream.write` no longer waits for each piece's own send. It queues the piece (sent at
@@ -38,3 +42,16 @@ All notable changes to Gannet are recorded here. Gannet is experimental, and unt
   producer faster than one carrier round trip per piece is no longer held to that pace: 64-byte frames from another
   thread went from about 21 µs to under 2 µs each on loopback. `GannetConfig` gains that parameter, after
   `heldBuffers`.
+
+### Fixed
+
+- `Transfer-Encoding` and `Connection` tokens were lower-cased with Unicode rules, so `chun\u212Aed` (a Kelvin sign)
+  read as `chunked`; and list elements were trimmed of Unicode spaces, so `Content-Length: 5\u00A0` read as 5. Both
+  now fold and trim ASCII only, and are refused.
+- Chunk size lines accepted a bare LF, leading or trailing whitespace, and anything after a `;`, including a bare CR;
+  chunk data could end in a bare LF. Chunk lines now need CR LF and extensions must parse as RFC 9112 says.
+- Trailer fields were thrown away unchecked; a malformed one now breaks the body.
+- A `Host` value that is not `uri-host [ ":" port ]`, and an absolute-form target with an empty host or userinfo,
+  were accepted; both are 400 now.
+- A `maxHeaderBytes` near `Int.MAX_VALUE` overflowed the parser's index arithmetic.
+- Empty lines before a request were skipped without limit; more than 256 bytes of them is a 400.

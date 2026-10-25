@@ -37,6 +37,7 @@ import java.time.Duration
  *   until one finishes, as at [maxConnections].
  * @property maxBufferedBytes what one connection may hold: replies queued while a send is in flight, past which its
  *   writer waits for the client to take them, and unread request bytes, past which the connection is closed.
+ * @property maxHeaderCount header field lines a request may have; past this, 431.
  */
 data class GannetConfig(
     val host: String = "127.0.0.1",
@@ -66,6 +67,7 @@ data class GannetConfig(
     val maxConnections: Int = MAX_CONNECTIONS,
     val maxHandshakes: Int = MAX_HANDSHAKES,
     val maxBufferedBytes: Int = MAX_BUFFERED,
+    val maxHeaderCount: Int = HEADER_COUNT,
 ) {
     init {
         require(port in 0..MAX_PORT) { "port must be in 0..$MAX_PORT, not $port" }
@@ -75,6 +77,7 @@ data class GannetConfig(
         }
         require(bufferSize > 0) { "bufferSize must be positive, not $bufferSize" }
         require(maxRequestLineBytes in 1..maxHeaderBytes) { "maxRequestLineBytes must be in 1..maxHeaderBytes" }
+        require(maxHeaderCount > 0) { "maxHeaderCount must be positive, not $maxHeaderCount" }
         require(heldBuffers > 0) { "heldBuffers must be positive, not $heldBuffers" }
         require(streamHighWatermark >= 0) { "streamHighWatermark must not be negative, not $streamHighWatermark" }
         require(!tick.isNegative && !tick.isZero) { "tick must be positive, not $tick" }
@@ -97,6 +100,7 @@ private const val MAX_BUFFERS = 32_768
 
 private const val REQUEST_LINE = 8 * 1024
 private const val HEADER_BYTES = 16 * 1024
+private const val HEADER_COUNT = 100
 private const val DRAIN_BYTES = 64 * 1024L
 private const val THIRTY = 30L
 private const val TWENTY = 20L

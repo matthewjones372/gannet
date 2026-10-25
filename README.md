@@ -93,8 +93,8 @@ fun main() {
 
 The handler runs on the carrier. Returning without answering (and without detaching) is answered with a 500; a throw
 is answered with a 413 for `BodyTooLargeException`, a 400 for `MalformedBodyException`, and a 500 otherwise. `Date`,
-`Content-Length` and chunked framing are added for you. `GannetConfig` holds the limits (request line, header and
-body sizes, timeouts, connection and memory caps, stop grace) and the ring and buffer sizing.
+`Content-Length` and chunked framing are added for you. `GannetConfig` holds the limits (request line, header size
+and count, body size, timeouts, connection and memory caps, stop grace) and the ring and buffer sizing.
 
 ### Limits
 
@@ -111,12 +111,19 @@ limit is a `GannetConfig` field:
 | `maxConnections` | 10 000 | Connections served at once, per server. At the cap each carrier stops accepting: the connection it accepted last waits unserved, the rest wait in the listen backlog, and nothing is refused. |
 | `maxHandshakes` | 64 | TLS handshakes in progress at once, per carrier. At the cap that carrier stops accepting until one finishes. |
 | `maxBufferedBytes` | 1 MiB | Replies queued for one connection while a send is in flight: past it the writer waits for the client, under `writeTimeout`, and no more pipelined requests are read meanwhile. Unread request bytes: past it the connection is closed. |
-| `maxRequestLineBytes`, `maxHeaderBytes` | 8 KiB, 16 KiB | Answered 414 or 431, and closed. |
+| `maxRequestLineBytes`, `maxHeaderBytes`, `maxHeaderCount` | 8 KiB, 16 KiB, 100 | Answered 414 or 431, and closed. |
 | `maxBodyBytes`, `drainBytes` | unlimited, 64 KiB | A body read past `maxBodyBytes` fails with `BodyTooLargeException` (413); an unread body longer than `drainBytes` closes the connection rather than being read and dropped. |
 | `heldBuffers` | 16 | A connection holding this many unread receive buffers has its receive paused, so the kernel's window slows the sender. |
 
 The carrier checks the timeouts on each tick (`GannetConfig.tick`, 250 ms by default), so one fires up to a tick late.
 A connection closed by a limit is shut down without a reply.
+
+### Request parsing
+
+Request parsing follows RFC 9112 strictly where leniency invites request smuggling: `Content-Length` with
+`Transfer-Encoding`, differing or malformed lengths, obfuscated transfer codings, bare CRs, obs-fold, invalid `Host`
+values and malformed chunk lines or extensions are refused with a 4xx or 5xx status and the connection closed. The
+head parser and chunked decoder are fuzzed with Jazzer, and a table of malformed and smuggling requests runs as tests.
 
 ### TLS
 
@@ -147,6 +154,10 @@ connection waits and the carrier serves the others. A failed handshake closes on
 
 `build` compiles, runs the tests, and checks detekt, Spotless (ktlint), the binary API dump in `api/gannet.api`
 (`./gradlew apiDump` after an intended API change), and, where the io_uring tests run, the Kover coverage floor.
+
+`./gradlew fuzz -PfuzzTarget='*HeadFuzzTest*' -PfuzzSeconds=300` fuzzes one target (`HeadFuzzTest`,
+`ChunkedFuzzTest` or `ConnectionFuzzTest`); `test` replays each target's seeds and saved findings from
+`src/test/resources`.
 
 The tests start real servers on io_uring. Where io_uring is unusable (off Linux, or in a container that refuses it)
 they skip. Set `GANNET_REQUIRE_URING=1` to make them fail instead, which is what CI does.
