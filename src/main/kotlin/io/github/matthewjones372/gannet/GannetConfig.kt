@@ -18,6 +18,7 @@ import java.time.Duration
  * @property bufferCount receive buffers per carrier, a power of two; [bufferSize] bytes each.
  * @property fixedFiles direct descriptors per carrier, zero for ordinary ones.
  * @property heldBuffers receive buffers one connection may hold unread before its receive is paused.
+ * @property tls TLS for every connection, or null for plain TCP.
  */
 data class GannetConfig(
     val host: String = "127.0.0.1",
@@ -37,6 +38,7 @@ data class GannetConfig(
     val fixedFiles: Int = 16384,
     val heldBuffers: Int = 16,
     val tick: Duration = Duration.ofMillis(TICK_MILLIS),
+    val tls: GannetTls? = null,
 ) {
     init {
         require(port in 0..MAX_PORT) { "port must be in 0..$MAX_PORT, not $port" }
