@@ -406,6 +406,7 @@ final class Carrier extends Thread implements Engine.Completions {
             f.recvCancelling = false;
         }
         int bid = (flags & CQE_F_BUFFER) != 0 ? flags >>> 16 : -1;
+        if (bid >= 0) buffers.lent();
         if (f.zombie) {
             if (bid >= 0) buffers.recycle(bid);
             return;
@@ -518,6 +519,44 @@ final class Carrier extends Thread implements Engine.Completions {
         if (arena != null) arena.close();
         if (!listenerClosed) Sys.close(listener);
     }
+
+    /**
+     * What this carrier holds, counted on the carrier itself: for the soak and the tests to see that what connections
+     * take is given back. Not API. Fails if the carrier has stopped.
+     */
+    CompletableFuture<Stats> stats() {
+        CompletableFuture<Stats> result = new CompletableFuture<>();
+        execute(new Task() {
+            @Override
+            public void run() {
+                int sessions = 0;
+                int zombies = 0;
+                for (int i = 0; i < nextId; i++) {
+                    Fiber f = fibers[i];
+                    if (f == null) continue;
+                    if (f.zombie) zombies++;
+                    else if (f.session != null) sessions++;
+                }
+                result.complete(new Stats(live, sessions, zombies, handshakes, buffers.available(), buffers.count(),
+                    slots.slabs(), slots.available(), ring.waiting()));
+            }
+
+            @Override
+            public void reject() {
+                result.completeExceptionally(new IllegalStateException(getName() + " has stopped"));
+            }
+        });
+        return result;
+    }
+
+    /**
+     * A carrier's counts: fibers alive (the acceptor among them), those serving a connection, those ended with I/O
+     * still in flight, TLS handshakes in progress, receive buffers free of how many, send-slot slabs mapped and slots
+     * free in them, and operations the engine holds waiting (epoll only; -1 on io_uring, which keeps them in the
+     * kernel).
+     */
+    record Stats(int fibers, int sessions, int zombies, int handshakes, int freeBuffers, int buffers, int slotSlabs,
+                 int freeSlots, int engineWaiting) {}
 
     static Carrier current() {
         return (Carrier) Thread.currentThread();

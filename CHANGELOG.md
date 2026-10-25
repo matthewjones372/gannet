@@ -35,6 +35,13 @@ All notable changes to Gannet are recorded here. Gannet is experimental, and unt
   The epoll engine keeps the carrier-per-core, continuation-per-connection model, TLS, backpressure, timeouts,
   graceful stop and port zero. io_uring stays the faster engine. The epoll path is new.
 - `./gradlew check` runs the whole suite on both engines: `test` on `AUTO`, and `testEpoll` with every server on epoll.
+- A soak test, `./gradlew soak -PsoakMinutes=N`, outside `test`: a server in its own JVM, pinned to its own cores,
+  under a mixed load for N minutes on each engine (keep-alive, Content-Length and chunked POSTs up to 4 MiB,
+  pipelining, streamed replies abandoned midway, clients that trip each timeout, dropped connections, malformed
+  requests, TLS with full and abandoned handshakes, churn past `maxConnections`). It samples heap after GC, direct and
+  native memory, threads, descriptors and the carriers' connections, fibers and receive buffers, with throughput and
+  latency per interval, and fails on a leak, an upward heap trend, degraded latency, or any 5xx or server warning.
+  An opt-in `soak` workflow runs it by hand and weekly. The carriers' counts come from an internal hook, not API.
 
 ### Changed
 

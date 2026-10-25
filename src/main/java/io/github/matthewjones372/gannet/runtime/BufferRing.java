@@ -27,6 +27,8 @@ final class BufferRing {
     private final int mask;
     final int size;
     private int tail;
+    /** Buffers the engine has handed out in completions and not yet had back through [recycle]. */
+    private int lent;
 
     /** [count] buffers of [size] bytes each; [count] is a power of two. */
     BufferRing(Engine owner, Arena arena, int count, int size) {
@@ -40,6 +42,7 @@ final class BufferRing {
         reg.set(JAVA_LONG, 0, ring.address());
         reg.set(JAVA_INT, 8, count);
         owner.register(REGISTER_PBUF_RING, reg, 1);
+        lent = count;
         for (int bid = 0; bid < count; bid++) recycle(bid);
     }
 
@@ -52,7 +55,22 @@ final class BufferRing {
         return bytes;
     }
 
+    /** A completion has named a buffer, which is now the carrier's until [recycle]. */
+    void lent() {
+        lent++;
+    }
+
+    /** Buffers the engine may still pick from. */
+    int available() {
+        return mask + 1 - lent;
+    }
+
+    int count() {
+        return mask + 1;
+    }
+
     void recycle(int bid) {
+        lent--;
         // struct io_uring_buf: addr, len, bid. The ring's tail is the first entry's last two bytes.
         long e = 16L * (tail & mask);
         ring.set(JAVA_LONG, e, bytes.address() + (long) bid * size);

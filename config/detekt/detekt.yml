@@ -43,9 +43,10 @@ exceptions:
   TooGenericExceptionCaught:
     # A server's last line of defence catches Throwable on purpose: a handler
     # that throws is answered with a 500 and logged, and the carrier lives.
-    excludes: ['**/Server.kt']
+    # The soak's load counts any failure of a client as one, whatever it is.
+    excludes: ['**/Server.kt', '**/soak/**']
   SwallowedException:
-    excludes: ['**/test/**']
+    excludes: ['**/test/**', '**/soak/**']
 
 naming:
   MatchingDeclarationName:
@@ -68,7 +69,7 @@ style:
     active: true
   MagicNumber:
     # A status code in a test is the assertion, not a number needing a name.
-    excludes: ['**/test/**']
+    excludes: ['**/test/**', '**/soak/**']
     ignorePropertyDeclaration: true
     ignoreCompanionObjectPropertyDeclaration: true
     ignoreNamedArgument: true
@@ -82,6 +83,8 @@ style:
     excludeGuardClauses: true
   ThrowsCount:
     max: 3
+    # A client checking a reply has a failure for each way it can be wrong.
+    excludes: ['**/soak/**']
   MaxLineLength:
     maxLineLength: 120
   ForbiddenComment:
@@ -123,8 +126,8 @@ style:
     methods:
       - reason: 'Thread.sleep in library code turns a timeout into a stall; schedule instead.'
         value: 'java.lang.Thread.sleep'
-    # The timing tests sleep to make a gap they can measure.
-    excludes: ['**/test/**']
+    # The timing tests sleep to make a gap they can measure, and the soak's slow clients to be slow.
+    excludes: ['**/test/**', '**/soak/**']
   ForbiddenMethodCall/NoRunCatching:
     # A second instance, so the ban reaches the tests the one above excludes.
     # `runCatching` catches Throwable and turns it into a `Result` that is one
@@ -137,3 +140,6 @@ style:
 potential-bugs:
   ImplicitDefaultLocale:
     excludes: ['**/test/**']
+  ExplicitGarbageCollectionCall:
+    # The soak's server collects before each sample, so heap after GC is what it measures.
+    excludes: ['**/soak/**']

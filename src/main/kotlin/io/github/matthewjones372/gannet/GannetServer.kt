@@ -1,6 +1,7 @@
 package io.github.matthewjones372.gannet
 
 import io.github.matthewjones372.gannet.runtime.Carriers
+import io.github.matthewjones372.gannet.runtime.ServerStats
 import java.time.Duration
 
 /**
@@ -25,6 +26,9 @@ class GannetServer private constructor(private val carriers: Carriers, val host:
     fun awaitStopped() = carriers.join()
 
     override fun close() = stop()
+
+    /** What the server holds right now: open connections, and each carrier's fibers and buffers. Not API. */
+    internal fun stats(): ServerStats = carriers.stats()
 
     companion object {
         /**
