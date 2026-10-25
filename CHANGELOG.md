@@ -16,6 +16,24 @@ All notable changes to Gannet are recorded here. Gannet is experimental, and unt
   bodies, `100-continue` and streamed replies work as over plain TCP, writes still never park, and a failed handshake
   closes only its own connection. The TLS path is new.
 
+- `GannetConfig.maxHeaderCount` (default 100): a request with more header field lines is answered 431.
+- Fuzz targets for the request-head parser, the chunked decoder and a whole connection's input (Jazzer), replayed by
+  `test` and fuzzed by the `fuzz` task and a CI smoke step; RFC 9112 conformance and request-smuggling tests.
+
 ### Changed
 
-- `GannetConfig` has a new last parameter, `tls`, so its constructor and `copy` signatures changed.
+- `GannetConfig` has new last parameters, `tls` and `maxHeaderCount`, so its constructor and `copy` signatures
+  changed.
+
+### Fixed
+
+- `Transfer-Encoding` and `Connection` tokens were lower-cased with Unicode rules, so `chun\u212Aed` (a Kelvin sign)
+  read as `chunked`; and list elements were trimmed of Unicode spaces, so `Content-Length: 5\u00A0` read as 5. Both
+  now fold and trim ASCII only, and are refused.
+- Chunk size lines accepted a bare LF, leading or trailing whitespace, and anything after a `;`, including a bare CR;
+  chunk data could end in a bare LF. Chunk lines now need CR LF and extensions must parse as RFC 9112 says.
+- Trailer fields were thrown away unchecked; a malformed one now breaks the body.
+- A `Host` value that is not `uri-host [ ":" port ]`, and an absolute-form target with an empty host or userinfo,
+  were accepted; both are 400 now.
+- A `maxHeaderBytes` near `Int.MAX_VALUE` overflowed the parser's index arithmetic.
+- Empty lines before a request were skipped without limit; more than 256 bytes of them is a 400.

@@ -88,8 +88,13 @@ fun main() {
 
 The handler runs on the carrier. Returning without answering (and without detaching) is answered with a 500; a throw
 is answered with a 413 for `BodyTooLargeException`, a 400 for `MalformedBodyException`, and a 500 otherwise. `Date`,
-`Content-Length` and chunked framing are added for you. `GannetConfig` holds the limits (request line, header and
-body sizes, idle timeout, stop grace) and the ring and buffer sizing.
+`Content-Length` and chunked framing are added for you. `GannetConfig` holds the limits (request line, header
+size and count, body size, idle timeout, stop grace) and the ring and buffer sizing.
+
+Request parsing follows RFC 9112 strictly where leniency invites request smuggling: `Content-Length` with
+`Transfer-Encoding`, differing or malformed lengths, obfuscated transfer codings, bare CRs, obs-fold, invalid `Host`
+values and malformed chunk lines or extensions are refused with a 4xx or 5xx status and the connection closed. The
+head parser and chunked decoder are fuzzed with Jazzer, and a table of malformed and smuggling requests runs as tests.
 
 ### TLS
 
@@ -120,6 +125,10 @@ connection waits and the carrier serves the others. A failed handshake closes on
 
 `build` compiles, runs the tests, and checks detekt, Spotless (ktlint), the binary API dump in `api/gannet.api`
 (`./gradlew apiDump` after an intended API change), and, where the io_uring tests run, the Kover coverage floor.
+
+`./gradlew fuzz -PfuzzTarget='*HeadFuzzTest*' -PfuzzSeconds=300` fuzzes one target (`HeadFuzzTest`,
+`ChunkedFuzzTest` or `ConnectionFuzzTest`); `test` replays each target's seeds and saved findings from
+`src/test/resources`.
 
 The tests start real servers on io_uring. Where io_uring is unusable (off Linux, or in a container that refuses it)
 they skip. Set `GANNET_REQUIRE_URING=1` to make them fail instead, which is what CI does.
