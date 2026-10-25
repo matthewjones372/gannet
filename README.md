@@ -22,8 +22,10 @@ Gannet is an HTTP/1.1 server for the JVM built directly on Linux's io_uring.
 - **Blocking work is handed off explicitly.** Anything that blocks the *thread* (JDBC, a lock held across a wait,
   `Thread.sleep`) goes to an executor of your choosing through `exchange.offload(...)`, or the exchange is detached and
   answered later from any thread. Every exchange call works from any thread.
-- **Backpressure is built in.** Each `ResponseStream.write` returns once the kernel has taken the bytes, so a slow
-  reader holds the writer back.
+- **Backpressure is built in.** A `ResponseStream.write` queues its bytes and returns while the bytes not yet taken
+  by the kernel stay under `GannetConfig.streamHighWatermark` (64 KiB by default); past it the write waits, so a slow
+  reader holds the writer back and memory stays bounded. `ResponseStream.flush` waits until the kernel has taken
+  everything written.
 - **TLS 1.3 and 1.2, through the JDK's `SSLEngine`** (new). Ciphertext from the ring's receive buffers is
   decrypted into the request parser's buffer, and replies are encrypted on their way to the same send path, so writes
   still never park and backpressure is unchanged. ALPN offers `http/1.1`.
@@ -74,7 +76,7 @@ fun main() {
             }
 
             "/count" -> exchange.stream(200, listOf("Content-Type" to "text/plain")).use { out ->
-                (1..5).forEach { out.write("$it\n".toByteArray()) } // each write waits for the kernel
+                (1..5).forEach { out.write("$it\n".toByteArray()) } // waits only past the watermark
             }
 
             else -> exchange.respond(404)
