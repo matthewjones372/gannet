@@ -57,8 +57,9 @@ with that message.
 - `EPOLL`: epoll and non-blocking sockets only.
 
 io_uring is the faster engine: it sends a whole pass's I/O in one system call and receives into buffers the kernel
-picks, where epoll makes a call for every receive and send. On a keep-alive loop of small requests, epoll served
-about EPOLL_RATIO of what io_uring did (see the CHANGELOG). Both engines keep the same model (a carrier per core,
+picks, where epoll makes a system call for every receive and every send. On a keep-alive loop of small GETs on a
+shared 4-core VM, epoll served between about three quarters of io_uring's requests per second (two carriers, 124k
+against 166k) and as many (one carrier, about 74k each); the gap widens as a pass carries more I/O. Both engines keep the same model (a carrier per core,
 connections as continuations, writes that never park) and the same features: TLS, backpressure, timeouts, graceful
 stop and port zero.
 
