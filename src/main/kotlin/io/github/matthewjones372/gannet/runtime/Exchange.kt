@@ -234,25 +234,55 @@ internal class BodyReader(private val input: Inbound, private val head: Head) {
         }
     }
 
+    /**
+     * What is left of the body, read straight from the connection's input into the array returned, with no buffer in
+     * between: of exactly the size left when the length is known, else grown as the bytes arrive and trimmed once.
+     */
     fun readAll(limit: Long): ByteArray {
+        failure?.let { throw it }
+        if (done) return EMPTY
         // An array holds no more than this, whatever the caller allows.
         val most = minOf(limit, MAX_ARRAY)
-        val fixed = framing as? Framing.Fixed
-        if (fixed != null && fixed.length > most) throw BodyTooLargeException(most)
-        val all = Out(minOf(fixed?.length ?: PIECE.toLong(), FIRST_ARRAY).toInt())
-        val piece = ByteArray(PIECE)
+        return if (framing is Framing.Fixed) readAllFixed(most) else readAllGrowing(most)
+    }
+
+    private fun readAllFixed(most: Long): ByteArray {
+        if (total + remaining > most) throw BodyTooLargeException(most)
+        // A declared length is trusted only so far before its bytes arrive; past that the array grows as they do,
+        // never past what is left, so it ends exactly full.
+        var all = ByteArray(minOf(remaining, FIRST_ARRAY).toInt())
+        var at = 0
+        while (!done) {
+            if (at == all.size) all = all.copyOf(minOf(all.size * 2L, at + remaining).toInt())
+            at += read(all, at, all.size - at, most)
+        }
+        return all
+    }
+
+    private fun readAllGrowing(most: Long): ByteArray {
+        var all = ByteArray(minOf(FIRST_GROWING, most).toInt())
+        var at = 0
         while (true) {
-            val n = read(piece, 0, PIECE, most)
-            if (n < 0) return if (all.size == all.bytes.size) all.bytes else all.bytes.copyOf(all.size)
-            all.put(piece, 0, n)
+            if (at == all.size) {
+                // Full at the limit: the body may end here, but [read] refuses one more byte as past the limit.
+                if (at.toLong() == most) {
+                    read(ByteArray(1), 0, 1, most)
+                    return all
+                }
+                all = all.copyOf(minOf(all.size * 2L, most).toInt())
+            }
+            val n = read(all, at, all.size - at, most)
+            if (n < 0) return if (at == all.size) all else all.copyOf(at)
+            at += n
         }
     }
 
-    /** At most [max] bytes of the body as a new array, or null at the end. */
+    /** At most [max] bytes of the body as a new array, sized to what a known length has left; null at the end. */
     fun readPiece(max: Int, limit: Long): ByteArray? {
-        val piece = ByteArray(minOf(max, PIECE))
+        val size = minOf(max, PIECE)
+        val piece = ByteArray(if (framing is Framing.Fixed) minOf(size.toLong(), remaining).toInt() else size)
         val n = read(piece, 0, piece.size, limit)
-        return if (n < 0) null else piece.copyOf(n)
+        return if (n < 0) null else if (n == piece.size) piece else piece.copyOf(n)
     }
 
     private fun askToContinue() {
@@ -331,7 +361,7 @@ internal class BodyReader(private val input: Inbound, private val head: Head) {
     fun finish(budget: Long): Boolean {
         if (done) return true
         if (mustClose(budget)) return false
-        val scratch = ByteArray(PIECE)
+        val scratch = ByteArray(if (framing is Framing.Fixed) minOf(remaining, PIECE.toLong()).toInt() else PIECE)
         val start = total
         return try {
             // Past a refusal for size, which leaves the framing intact, so the rest can still be read and dropped.
@@ -354,7 +384,11 @@ internal class BodyReader(private val input: Inbound, private val head: Head) {
         const val PIECE = 16 * 1024
         const val MAX_ARRAY = Int.MAX_VALUE - 16L
         const val FIRST_ARRAY = 1L shl 20
+
+        /** Where a body of unknown length starts, doubling from there: most bodies a handler reads whole are small. */
+        const val FIRST_GROWING = 64L
         const val MAX_CHUNK_LINE = 1024
+        val EMPTY = ByteArray(0)
     }
 }
 
@@ -378,7 +412,11 @@ internal class Body(private val ex: UringExchange) : RequestBody {
         val rest = if (ex.onCarrier) ex.reader.readAll(limit) else ask(Mail.ReadAll(ex, limit, Answer()), null)
         val held = leftover ?: return rest
         leftover = null
-        return held.copyOfRange(leftoverAt, held.size) + rest
+        val kept = held.size - leftoverAt
+        val all = ByteArray(kept + rest.size)
+        System.arraycopy(held, leftoverAt, all, 0, kept)
+        System.arraycopy(rest, 0, all, kept, rest.size)
+        return all
     }
 
     override fun read(into: ByteArray, offset: Int, length: Int): Int = readWithin(into, offset, length, null)

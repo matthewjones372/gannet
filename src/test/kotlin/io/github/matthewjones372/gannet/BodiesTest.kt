@@ -92,6 +92,63 @@ class BodiesTest {
         }
 
     @Test
+    fun `readAll returns a Content-Length body at or under the limit at its size, and refuses one over it`() =
+        serving(handler = lengthOf(limit = 2000)) { server ->
+            Raw(server.port).use { raw ->
+                for (size in listOf(1, 2, 1999, 2000)) {
+                    val body = "b".repeat(size)
+                    val reply = raw.send(post("/", body)).read()
+                    reply["X-Length"] shouldBe "$size"
+                    reply.text shouldBe body
+                }
+                raw.send(post("/", "c".repeat(2001))).read().status shouldBe 413
+                raw.send(post("/", "after")).read().text shouldBe "after"
+            }
+        }
+
+    @Test
+    fun `readAll returns chunked bodies of every size, past several receive buffers`() =
+        serving(handler = lengthOf()) { server ->
+            Raw(server.port).use { raw ->
+                for (size in listOf(1, 2, 64, 65, 4096, 20_000, 300_000)) {
+                    val body = (0 until size).map { 'a' + it % 26 }.joinToString("")
+                    val reply = raw.send(chunkedPost("/", *body.chunked(7000).toTypedArray())).read()
+                    reply["X-Length"] shouldBe "$size"
+                    reply.text shouldBe body
+                }
+            }
+        }
+
+    @Test
+    fun `100 Continue is sent when readAll reads a chunked body`() = serving(handler = lengthOf()) { server ->
+        Raw(server.port).use { raw ->
+            raw.send("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nExpect: 100-continue\r\n\r\n")
+            raw.read().status shouldBe 100
+            raw.send("3\r\nabc\r\n2\r\nde\r\n0\r\n\r\n").read().text shouldBe "abcde"
+        }
+    }
+
+    @Test
+    fun `a connection that ends inside a chunked body breaks readAll`() {
+        val failures = java.util.concurrent.LinkedBlockingQueue<Throwable>()
+        serving(
+            handler = { ex ->
+                try {
+                    ex.request.body.readAll()
+                } catch (e: MalformedBodyException) {
+                    failures.add(e)
+                }
+                ex.respond(200)
+            },
+        ) { server ->
+            Raw(server.port).use { raw ->
+                raw.send("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n10\r\nshort")
+            }
+            (failures.poll(10, java.util.concurrent.TimeUnit.SECONDS) is MalformedBodyException) shouldBe true
+        }
+    }
+
+    @Test
     fun `a declared length no array can hold is refused before reading`() = serving(handler = lengthOf()) { server ->
         Raw(server.port).use { raw ->
             val reply = raw.send("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5000000000\r\n\r\n").read()
