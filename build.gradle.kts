@@ -124,6 +124,43 @@ tasks.register<Test>("fuzz") {
     outputs.cacheIf { false }
 }
 
+/**
+ * The soak: a mixed load (keep-alive, POSTs, pipelining, streams, slow and vanishing clients, malformed requests,
+ * TLS, churn past the connection cap) against a server in a JVM of its own, for `-PsoakMinutes` on each engine, with
+ * checks at the end that nothing leaked or degraded. Its own source set, so `test` never runs it; `check` only
+ * compiles it. See the README's "Soak testing".
+ */
+val soak: SourceSet = sourceSets.create("soak")
+
+kotlin.target.compilations.named("soak") {
+    // `internal` reaches across, for the server's counts.
+    associateWith(kotlin.target.compilations.getByName("main"))
+}
+
+tasks.register<JavaExec>("soak") {
+    group = "verification"
+    description = "Soaks the server on each engine under mixed load and checks for leaks and degradation."
+    classpath = soak.runtimeClasspath
+    mainClass.set("io.github.matthewjones372.gannet.soak.SoakKt")
+    javaLauncher.set(javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(25)) })
+    jvmArgs(runtimeFlags)
+    jvmArgs("-Xmx1g")
+    val names = listOf(
+        "minutes", "engines", "intervalSeconds", "warmupSeconds", "graceSeconds", "serverCpus", "loadCpus",
+        "carriers", "heapSlope", "directSlope", "scenarios",
+    )
+    names.forEach { name ->
+        providers.gradleProperty("soak${name.replaceFirstChar { it.uppercase() }}").orNull?.let {
+            systemProperty("soak.$name", it)
+        }
+    }
+    systemProperty("soak.out", layout.buildDirectory.dir("soak").get().asFile.path)
+    outputs.upToDateWhen { false }
+}
+
+// Compiled and linted with every `check`, never run by it.
+tasks.named("check") { dependsOn("soakClasses", "detektSoak") }
+
 // BCV reads classes with an ASM that stops short of class file 69 (JDK 25).
 configurations.matching { it.name.startsWith("bcv-rt-jvm-cp") }.configureEach {
     resolutionStrategy.force("org.ow2.asm:asm:9.11", "org.ow2.asm:asm-tree:9.11")
@@ -179,7 +216,11 @@ spotless {
 // sits, not a target to write tests towards.
 kover {
     // Fuzzing measures nothing the floor is about, and must not run as part of `check`.
-    currentProject { instrumentation { disabledForTestTasks.add("fuzz") } }
+    currentProject {
+        instrumentation { disabledForTestTasks.add("fuzz") }
+        // The soak's own code is a harness, measured by nothing the floor is about.
+        sources { excludedSourceSets.add("soak") }
+    }
     reports {
         verify {
             rule {

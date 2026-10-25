@@ -26,10 +26,10 @@ abstract class Engine {
     abstract void prep(byte op, int sqeFlags, int ioprio, int fd, long off, long addr, int len, int opFlags,
                        int bufGroup, int fileIndex, long userData);
 
-    /** Sends what is queued and gathers completions, waiting for at least one when [wait]. */
     /** Whether submissions are queued that have not yet been handed on. */
     abstract boolean hasQueued();
 
+    /** Sends what is queued and gathers completions, waiting for at least one when [wait]. */
     abstract void enter(boolean wait);
 
     /** Hands every completion gathered so far to [to], and says how many there were. */
@@ -47,6 +47,11 @@ abstract class Engine {
 
     /** A sparse table of [count] direct descriptors; false where there is none to have. */
     abstract boolean registerFiles(int count);
+
+    /** Operations held waiting in user space, for the soak to see none is forgotten; -1 where the kernel holds them. */
+    int waiting() {
+        return -1;
+    }
 
     /** Ends the engine and frees what it holds. */
     abstract void close();

@@ -35,6 +35,16 @@ final class SendSlots {
         free[freeCount++] = buffer;
     }
 
+    /** Huge-page slabs mapped for slots so far. */
+    int slabs() {
+        return slabCount;
+    }
+
+    /** Slots free across those slabs. */
+    int available() {
+        return freeCount;
+    }
+
     /** Once nothing can be sending from a slot any more. */
     void free() {
         for (int i = 0; i < slabCount; i++) slabs[i].unmap();

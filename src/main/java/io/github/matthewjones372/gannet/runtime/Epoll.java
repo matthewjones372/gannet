@@ -234,6 +234,11 @@ final class Epoll extends Engine {
     }
 
     @Override
+    int waiting() {
+        return waiting.size();
+    }
+
+    @Override
     void close() {
         Sys.close(epfd);
         arena.close();
