@@ -1,0 +1,146 @@
+public final class io/github/matthewjones372/gannet/BodyTooLargeException : java/io/IOException {
+	public fun <init> (J)V
+	public final fun getLimit ()J
+}
+
+public final class io/github/matthewjones372/gannet/GannetConfig {
+	public fun <init> ()V
+	public fun <init> (Ljava/lang/String;IIIIJJLjava/time/Duration;Ljava/time/Duration;IIIIIIILjava/time/Duration;)V
+	public synthetic fun <init> (Ljava/lang/String;IIIIJJLjava/time/Duration;Ljava/time/Duration;IIIIIIILjava/time/Duration;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component10 ()I
+	public final fun component11 ()I
+	public final fun component12 ()I
+	public final fun component13 ()I
+	public final fun component14 ()I
+	public final fun component15 ()I
+	public final fun component16 ()I
+	public final fun component17 ()Ljava/time/Duration;
+	public final fun component2 ()I
+	public final fun component3 ()I
+	public final fun component4 ()I
+	public final fun component5 ()I
+	public final fun component6 ()J
+	public final fun component7 ()J
+	public final fun component8 ()Ljava/time/Duration;
+	public final fun component9 ()Ljava/time/Duration;
+	public final fun copy (Ljava/lang/String;IIIIJJLjava/time/Duration;Ljava/time/Duration;IIIIIIILjava/time/Duration;)Lio/github/matthewjones372/gannet/GannetConfig;
+	public static synthetic fun copy$default (Lio/github/matthewjones372/gannet/GannetConfig;Ljava/lang/String;IIIIJJLjava/time/Duration;Ljava/time/Duration;IIIIIIILjava/time/Duration;ILjava/lang/Object;)Lio/github/matthewjones372/gannet/GannetConfig;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getBacklog ()I
+	public final fun getBufferCount ()I
+	public final fun getBufferSize ()I
+	public final fun getCarriers ()I
+	public final fun getCompletionEntries ()I
+	public final fun getDrainBytes ()J
+	public final fun getFixedFiles ()I
+	public final fun getHeldBuffers ()I
+	public final fun getHost ()Ljava/lang/String;
+	public final fun getIdleTimeout ()Ljava/time/Duration;
+	public final fun getMaxBodyBytes ()J
+	public final fun getMaxHeaderBytes ()I
+	public final fun getMaxRequestLineBytes ()I
+	public final fun getPort ()I
+	public final fun getRingEntries ()I
+	public final fun getStopGrace ()Ljava/time/Duration;
+	public final fun getTick ()Ljava/time/Duration;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/matthewjones372/gannet/GannetServer : java/lang/AutoCloseable {
+	public static final field Companion Lio/github/matthewjones372/gannet/GannetServer$Companion;
+	public synthetic fun <init> (Lio/github/matthewjones372/gannet/runtime/Carriers;Ljava/lang/String;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun awaitStopped ()V
+	public fun close ()V
+	public final fun getHost ()Ljava/lang/String;
+	public final fun getPort ()I
+	public final fun stop ()V
+	public final fun stop (Ljava/time/Duration;)V
+}
+
+public final class io/github/matthewjones372/gannet/GannetServer$Companion {
+	public final fun start (Lio/github/matthewjones372/gannet/GannetConfig;Lio/github/matthewjones372/gannet/HttpHandler;)Lio/github/matthewjones372/gannet/GannetServer;
+	public static synthetic fun start$default (Lio/github/matthewjones372/gannet/GannetServer$Companion;Lio/github/matthewjones372/gannet/GannetConfig;Lio/github/matthewjones372/gannet/HttpHandler;ILjava/lang/Object;)Lio/github/matthewjones372/gannet/GannetServer;
+}
+
+public final class io/github/matthewjones372/gannet/GannetSupport {
+	public static final field FLAGS Ljava/lang/String;
+	public static final field INSTANCE Lio/github/matthewjones372/gannet/GannetSupport;
+	public final fun problem ()Ljava/lang/String;
+	public final fun require ()V
+}
+
+public final class io/github/matthewjones372/gannet/GannetUnavailableException : java/lang/IllegalStateException {
+	public fun <init> (Ljava/lang/String;)V
+}
+
+public final class io/github/matthewjones372/gannet/Headers {
+	public fun <init> (Ljava/util/List;)V
+	public final fun all (Ljava/lang/String;)Ljava/util/List;
+	public final fun contains (Ljava/lang/String;)Z
+	public final fun get (Ljava/lang/String;)Ljava/lang/String;
+	public final fun getFields ()Ljava/util/List;
+	public final fun getNames ()Ljava/util/Set;
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class io/github/matthewjones372/gannet/HttpExchange {
+	public static final field Companion Lio/github/matthewjones372/gannet/HttpExchange$Companion;
+	public abstract fun detach ()V
+	public abstract fun getOnCarrier ()Z
+	public abstract fun getRequest ()Lio/github/matthewjones372/gannet/HttpRequest;
+	public abstract fun offload (Ljava/util/concurrent/Executor;Lkotlin/jvm/functions/Function1;)V
+	public abstract fun respond (ILjava/util/List;[B)V
+	public static synthetic fun respond$default (Lio/github/matthewjones372/gannet/HttpExchange;ILjava/util/List;[BILjava/lang/Object;)V
+	public abstract fun stream (ILjava/util/List;)Lio/github/matthewjones372/gannet/ResponseStream;
+	public static synthetic fun stream$default (Lio/github/matthewjones372/gannet/HttpExchange;ILjava/util/List;ILjava/lang/Object;)Lio/github/matthewjones372/gannet/ResponseStream;
+}
+
+public final class io/github/matthewjones372/gannet/HttpExchange$Companion {
+	public final fun getEMPTY_BODY ()[B
+}
+
+public abstract interface class io/github/matthewjones372/gannet/HttpHandler {
+	public abstract fun handle (Lio/github/matthewjones372/gannet/HttpExchange;)V
+}
+
+public final class io/github/matthewjones372/gannet/HttpRequest {
+	public final fun getBody ()Lio/github/matthewjones372/gannet/RequestBody;
+	public final fun getHeaders ()Lio/github/matthewjones372/gannet/Headers;
+	public final fun getMethod ()Ljava/lang/String;
+	public final fun getPath ()Ljava/lang/String;
+	public final fun getQuery ()Ljava/lang/String;
+	public final fun getTarget ()Ljava/lang/String;
+	public final fun getVersion ()Lio/github/matthewjones372/gannet/HttpVersion;
+}
+
+public final class io/github/matthewjones372/gannet/HttpVersion : java/lang/Enum {
+	public static final field HTTP_1_0 Lio/github/matthewjones372/gannet/HttpVersion;
+	public static final field HTTP_1_1 Lio/github/matthewjones372/gannet/HttpVersion;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/github/matthewjones372/gannet/HttpVersion;
+	public static fun values ()[Lio/github/matthewjones372/gannet/HttpVersion;
+}
+
+public final class io/github/matthewjones372/gannet/MalformedBodyException : java/io/IOException {
+	public fun <init> (Ljava/lang/String;)V
+}
+
+public abstract interface class io/github/matthewjones372/gannet/RequestBody {
+	public abstract fun fail (Ljava/io/IOException;)V
+	public abstract fun getLength ()Ljava/lang/Long;
+	public fun inputStream ()Ljava/io/InputStream;
+	public abstract fun read ([BII)I
+	public abstract fun read ([BIILjava/time/Duration;)I
+	public abstract fun readAll ()[B
+	public abstract fun readAll (J)[B
+}
+
+public abstract interface class io/github/matthewjones372/gannet/ResponseStream : java/lang/AutoCloseable {
+	public abstract fun abort ()V
+	public abstract fun close ()V
+	public abstract fun write ([BII)V
+	public static synthetic fun write$default (Lio/github/matthewjones372/gannet/ResponseStream;[BIIILjava/lang/Object;)V
+}
+
