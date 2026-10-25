@@ -33,9 +33,17 @@ class WireReply(val status: Int, val reason: String, val headers: Headers, val b
     override fun toString(): String = "WireReply($status $reason, $headers, ${text.take(200)})"
 }
 
-/** A client that writes raw bytes and reads replies off the socket, framing them as RFC 9112 says. */
-class Raw(port: Int, timeout: Duration = Duration.ofSeconds(20)) : AutoCloseable {
-    val socket = Socket("127.0.0.1", port).apply { soTimeout = timeout.toMillis().toInt() }
+/**
+ * A client that writes raw bytes and reads replies off [socket], framing them as RFC 9112 says. The socket may be a
+ * TLS one, for the same requests over TLS.
+ */
+class Raw(val socket: Socket, timeout: Duration = Duration.ofSeconds(20)) : AutoCloseable {
+    constructor(port: Int, timeout: Duration = Duration.ofSeconds(20)) : this(Socket("127.0.0.1", port), timeout)
+
+    init {
+        socket.soTimeout = timeout.toMillis().toInt()
+    }
+
     private val input = socket.getInputStream().buffered()
 
     fun send(text: String): Raw = send(text.toByteArray())

@@ -6,16 +6,21 @@ import io.github.matthewjones372.gannet.HttpHandler
 import io.github.matthewjones372.gannet.MalformedBodyException
 import java.io.IOException
 import java.util.concurrent.Executor
+import javax.net.ssl.SSLException
 
 /**
  * What every connection on one carrier shares. [read] is lent to whichever connection is reading, and [out] collects
  * whichever connection's replies until it flushes; both are safe because a connection hands them back before it
- * parks, and only one fiber runs on a carrier at a time.
+ * parks, and only one fiber runs on a carrier at a time. [tls] holds the TLS buffers lent the same way.
  */
 internal class Shared(val config: GannetConfig, val handler: HttpHandler) {
     val read = ByteArray(READ_BUFFER)
     val out = Out(OUT_BUFFER)
     val idleNanos = config.idleTimeout.toNanos()
+    val tls = config.tls?.let { TlsShared(it) }
+
+    /** The transport for a connection starting in the calling fiber. */
+    fun transport(): Transport = tls?.let { TlsTransport(it.tls.engine(), it) } ?: Plain
 
     private companion object {
         const val READ_BUFFER = 16 * 1024
@@ -34,6 +39,7 @@ internal class Connection(private val fd: Int, private val shared: Shared) : Ses
     private val carrier = Carrier.current()
     private val fiber = Io.fiber()
     private val config = shared.config
+    private val transport = shared.transport()
     val out = shared.out
     val maxHeaderBytes = config.maxHeaderBytes
     val maxBodyBytes = config.maxBodyBytes
@@ -58,7 +64,10 @@ internal class Connection(private val fd: Int, private val shared: Shared) : Ses
     fun run() {
         Io.attach(this, fd)
         try {
-            serve()
+            if (handshake()) serve()
+            // The replies collected so far go before the close_notify.
+            flush()
+            transport.close()
             // Waited for here rather than in the close, so a peer that stops reading meets the idle timeout.
             awaitSent()
         } catch (_: IOException) {
@@ -69,6 +78,19 @@ internal class Connection(private val fd: Int, private val shared: Shared) : Ses
             exchange = null
             failQueued()
         }
+    }
+
+    /**
+     * Runs the TLS handshake, if there is one, waiting on the peer as for an idle connection; false when it failed,
+     * which ends only this connection.
+     */
+    private fun handshake(): Boolean = try {
+        while (!transport.handshake()) awaitPeer(idle = true) { transport.awaitData() }
+        true
+    } catch (e: SSLException) {
+        // Scanners, old clients and mistrusted certificates all end here; none is the server's fault.
+        logger.log(System.Logger.Level.DEBUG, "A TLS handshake failed: {0}", e.message)
+        false
     }
 
     private fun serve() {
@@ -209,12 +231,12 @@ internal class Connection(private val fd: Int, private val shared: Shared) : Ses
     private fun fill(idle: Boolean = false, reading: BodyReader? = null): Boolean {
         if (eof) return false
         makeRoom()
-        var n = Io.readNow(buf, end, buf.size - end)
+        var n = transport.readNow(buf, end, buf.size - end)
         while (n == 0) {
-            awaitPeer(idle) { Io.awaitData() }
+            awaitPeer(idle) { transport.awaitData() }
             reading?.failure?.let { throw it }
             makeRoom()
-            n = Io.readNow(buf, end, buf.size - end)
+            n = transport.readNow(buf, end, buf.size - end)
         }
         if (n < 0) {
             eof = true
@@ -223,7 +245,7 @@ internal class Connection(private val fd: Int, private val shared: Shared) : Ses
         end += n
         // Whatever else has already arrived, so pipelined requests are answered in one pass.
         while (end < buf.size) {
-            val more = Io.readNow(buf, end, buf.size - end)
+            val more = transport.readNow(buf, end, buf.size - end)
             if (more < 0) eof = true
             if (more <= 0) break
             end += more
@@ -266,7 +288,7 @@ internal class Connection(private val fd: Int, private val shared: Shared) : Ses
     fun emit(bytes: ByteArray, offset: Int, length: Int) {
         if (length < LARGE) return out.put(bytes, offset, length)
         flush()
-        Io.write(bytes, offset, length)
+        transport.write(bytes, offset, length)
     }
 
     /** Hands what has been collected to the ring, without waiting. */
@@ -275,11 +297,11 @@ internal class Connection(private val fd: Int, private val shared: Shared) : Ses
         if (n == 0) return
         // Emptied first: if the write throws, the next connection on this carrier must not send these bytes.
         out.size = 0
-        Io.write(out.bytes, 0, n)
+        transport.write(out.bytes, 0, n)
     }
 
     /** Parks until the kernel has taken everything written: a slow reader holds the writer here. */
-    fun awaitSent() = awaitPeer(idle = false) { Io.awaitSend() }
+    fun awaitSent() = awaitPeer(idle = false) { transport.awaitSend() }
 
     /** Whether the reply about to be written should close the connection after it. */
     fun closeDecided(ex: UringExchange): Boolean = stopping || ex.reader.mustClose(config.drainBytes)
@@ -301,6 +323,7 @@ internal class Connection(private val fd: Int, private val shared: Shared) : Ses
     private fun beforePark() {
         flush()
         keepRest()
+        transport.beforePark()
     }
 
     // ------------------------------------------------------------------ the carrier's view
@@ -318,6 +341,7 @@ internal class Connection(private val fd: Int, private val shared: Shared) : Ses
         stopping = true
         if (force) {
             aborted = true
+            transport.abandon()
             Io.shutdown(carrier, fiber)
             carrier.wake(fiber)
         } else if (idle && fiber.waitingRecv) {

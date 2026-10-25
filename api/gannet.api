@@ -5,8 +5,8 @@ public final class io/github/matthewjones372/gannet/BodyTooLargeException : java
 
 public final class io/github/matthewjones372/gannet/GannetConfig {
 	public fun <init> ()V
-	public fun <init> (Ljava/lang/String;IIIIJJLjava/time/Duration;Ljava/time/Duration;IIIIIIILjava/time/Duration;)V
-	public synthetic fun <init> (Ljava/lang/String;IIIIJJLjava/time/Duration;Ljava/time/Duration;IIIIIIILjava/time/Duration;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Ljava/lang/String;IIIIJJLjava/time/Duration;Ljava/time/Duration;IIIIIIILjava/time/Duration;Lio/github/matthewjones372/gannet/GannetTls;)V
+	public synthetic fun <init> (Ljava/lang/String;IIIIJJLjava/time/Duration;Ljava/time/Duration;IIIIIIILjava/time/Duration;Lio/github/matthewjones372/gannet/GannetTls;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun component1 ()Ljava/lang/String;
 	public final fun component10 ()I
 	public final fun component11 ()I
@@ -16,6 +16,7 @@ public final class io/github/matthewjones372/gannet/GannetConfig {
 	public final fun component15 ()I
 	public final fun component16 ()I
 	public final fun component17 ()Ljava/time/Duration;
+	public final fun component18 ()Lio/github/matthewjones372/gannet/GannetTls;
 	public final fun component2 ()I
 	public final fun component3 ()I
 	public final fun component4 ()I
@@ -24,8 +25,8 @@ public final class io/github/matthewjones372/gannet/GannetConfig {
 	public final fun component7 ()J
 	public final fun component8 ()Ljava/time/Duration;
 	public final fun component9 ()Ljava/time/Duration;
-	public final fun copy (Ljava/lang/String;IIIIJJLjava/time/Duration;Ljava/time/Duration;IIIIIIILjava/time/Duration;)Lio/github/matthewjones372/gannet/GannetConfig;
-	public static synthetic fun copy$default (Lio/github/matthewjones372/gannet/GannetConfig;Ljava/lang/String;IIIIJJLjava/time/Duration;Ljava/time/Duration;IIIIIIILjava/time/Duration;ILjava/lang/Object;)Lio/github/matthewjones372/gannet/GannetConfig;
+	public final fun copy (Ljava/lang/String;IIIIJJLjava/time/Duration;Ljava/time/Duration;IIIIIIILjava/time/Duration;Lio/github/matthewjones372/gannet/GannetTls;)Lio/github/matthewjones372/gannet/GannetConfig;
+	public static synthetic fun copy$default (Lio/github/matthewjones372/gannet/GannetConfig;Ljava/lang/String;IIIIJJLjava/time/Duration;Ljava/time/Duration;IIIIIIILjava/time/Duration;Lio/github/matthewjones372/gannet/GannetTls;ILjava/lang/Object;)Lio/github/matthewjones372/gannet/GannetConfig;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getBacklog ()I
 	public final fun getBufferCount ()I
@@ -44,6 +45,7 @@ public final class io/github/matthewjones372/gannet/GannetConfig {
 	public final fun getRingEntries ()I
 	public final fun getStopGrace ()Ljava/time/Duration;
 	public final fun getTick ()Ljava/time/Duration;
+	public final fun getTls ()Lio/github/matthewjones372/gannet/GannetTls;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
@@ -69,6 +71,34 @@ public final class io/github/matthewjones372/gannet/GannetSupport {
 	public static final field INSTANCE Lio/github/matthewjones372/gannet/GannetSupport;
 	public final fun problem ()Ljava/lang/String;
 	public final fun require ()V
+}
+
+public final class io/github/matthewjones372/gannet/GannetTls {
+	public static final field Companion Lio/github/matthewjones372/gannet/GannetTls$Companion;
+	public fun <init> (Ljava/nio/file/Path;[C)V
+	public fun <init> (Ljavax/net/ssl/SSLContext;Lio/github/matthewjones372/gannet/GannetTls$ClientAuth;Ljava/util/List;Ljava/util/List;Ljava/util/concurrent/Executor;)V
+	public synthetic fun <init> (Ljavax/net/ssl/SSLContext;Lio/github/matthewjones372/gannet/GannetTls$ClientAuth;Ljava/util/List;Ljava/util/List;Ljava/util/concurrent/Executor;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getCipherSuites ()Ljava/util/List;
+	public final fun getClientAuth ()Lio/github/matthewjones372/gannet/GannetTls$ClientAuth;
+	public final fun getContext ()Ljavax/net/ssl/SSLContext;
+	public final fun getHandshakeExecutor ()Ljava/util/concurrent/Executor;
+	public final fun getProtocols ()Ljava/util/List;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/matthewjones372/gannet/GannetTls$ClientAuth : java/lang/Enum {
+	public static final field NEED Lio/github/matthewjones372/gannet/GannetTls$ClientAuth;
+	public static final field NONE Lio/github/matthewjones372/gannet/GannetTls$ClientAuth;
+	public static final field WANT Lio/github/matthewjones372/gannet/GannetTls$ClientAuth;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/github/matthewjones372/gannet/GannetTls$ClientAuth;
+	public static fun values ()[Lio/github/matthewjones372/gannet/GannetTls$ClientAuth;
+}
+
+public final class io/github/matthewjones372/gannet/GannetTls$Companion {
+	public final fun getAPPLICATION_PROTOCOLS ()Ljava/util/List;
+	public final fun getDEFAULT_PROTOCOLS ()Ljava/util/List;
+	public final fun pkcs12 (Ljava/nio/file/Path;[C)Ljavax/net/ssl/SSLContext;
 }
 
 public final class io/github/matthewjones372/gannet/GannetUnavailableException : java/lang/IllegalStateException {
