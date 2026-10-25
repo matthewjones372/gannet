@@ -127,6 +127,19 @@ they skip. Set `GANNET_REQUIRE_URING=1` to make them fail instead, which is what
 `./gradlew publishToMavenLocal` installs the current snapshot without needing signing keys. A release is a `v*` tag,
 which the `publish` workflow builds, signs and uploads to Maven Central.
 
+## Snapshots
+
+Untagged commits can be published to Maven Central's snapshot repository by dispatching the `snapshot` workflow from
+a branch. Snapshots are unsigned and dropped after 90 days. To use one, add the repository and depend on the next
+version with `-SNAPSHOT` appended, e.g. `0.1.0-SNAPSHOT`:
+
+```kotlin
+repositories {
+    mavenCentral()
+    maven("https://central.sonatype.com/repository/maven-snapshots/")
+}
+```
+
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE).
