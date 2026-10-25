@@ -39,6 +39,12 @@ class SupportTest {
         shouldThrow<IllegalArgumentException> { GannetConfig(maxRequestLineBytes = 20_000) }
         shouldThrow<IllegalArgumentException> { GannetConfig(heldBuffers = 0) }
         shouldThrow<IllegalArgumentException> { GannetConfig(tick = java.time.Duration.ZERO) }
+        shouldThrow<IllegalArgumentException> { GannetConfig(headTimeout = java.time.Duration.ZERO) }
+        shouldThrow<IllegalArgumentException> { GannetConfig(writeTimeout = java.time.Duration.ofSeconds(-1)) }
+        shouldThrow<IllegalArgumentException> { GannetConfig(minBodyRate = -1) }
+        shouldThrow<IllegalArgumentException> { GannetConfig(maxConnections = 0) }
+        shouldThrow<IllegalArgumentException> { GannetConfig(maxHandshakes = 0) }
+        shouldThrow<IllegalArgumentException> { GannetConfig(maxBufferedBytes = 0) }
     }
 
     @Test

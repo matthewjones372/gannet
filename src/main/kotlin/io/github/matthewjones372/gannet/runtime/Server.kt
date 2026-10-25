@@ -17,6 +17,13 @@ internal class Shared(val config: GannetConfig, val handler: HttpHandler) {
     val read = ByteArray(READ_BUFFER)
     val out = Out(OUT_BUFFER)
     val idleNanos = config.idleTimeout.toNanos()
+    val headNanos = config.headTimeout.toNanos()
+    val bodyNanos = config.bodyTimeout.toNanos()
+    val writeNanos = config.writeTimeout.toNanos()
+    val handshakeNanos = config.handshakeTimeout.toNanos()
+
+    /** Nanoseconds of extra body allowance each byte read earns; zero earns none. */
+    val nanosPerBodyByte = if (config.minBodyRate == 0L) 0.0 else NANOS / config.minBodyRate
     val tls = config.tls?.let { TlsShared(it) }
 
     /** The transport for a connection starting in the calling fiber. */
@@ -25,6 +32,7 @@ internal class Shared(val config: GannetConfig, val handler: HttpHandler) {
     private companion object {
         const val READ_BUFFER = 16 * 1024
         const val OUT_BUFFER = 16 * 1024
+        const val NANOS = 1e9
     }
 }
 
@@ -44,6 +52,7 @@ internal class Connection(private val fd: Int, private val shared: Shared) : Ses
     val maxHeaderBytes = config.maxHeaderBytes
     val maxBodyBytes = config.maxBodyBytes
     val watermark = config.streamHighWatermark
+    private val maxBuffered = config.maxBufferedBytes
 
     private var own: ByteArray? = null
     private var buf = shared.read
@@ -54,8 +63,25 @@ internal class Connection(private val fd: Int, private val shared: Shared) : Ses
     /** When the fiber started waiting on its peer, or zero when it is not. */
     private var waitingSince = 0L
 
+    /** What the fiber waits on its peer for, which picks the timeout the carrier's timer holds it to. */
+    private var waitingFor = Wait.IDLE
+
     /** Waiting for a request with nothing of one read yet, so stopping may close it at once. */
     private var idle = false
+
+    /** When the connection was accepted, which the handshake's timeout counts from. */
+    private val accepted = System.nanoTime()
+
+    /** When the first byte of the head being read was seen, or zero between heads. */
+    private var headSince = 0L
+
+    /** The current body: time spent waiting for it, and bytes of it read, which earn more time. */
+    private var bodyWaited = 0L
+    private var bodyBytes = 0L
+
+    /** While waiting to send: the fiber's sent bytes when last looked at, and since when they have not moved. */
+    private var sentSeen = 0L
+    private var sendStalledSince = 0L
     private var stopping = false
     private var aborted = false
     private var closed = false
@@ -65,15 +91,22 @@ internal class Connection(private val fd: Int, private val shared: Shared) : Ses
     fun run() {
         Io.attach(this, fd)
         try {
-            if (handshake()) serve()
+            val shaken = try {
+                handshake()
+            } finally {
+                carrier.endHandshake(fiber)
+            }
+            if (shaken) serve()
             // The replies collected so far go before the close_notify.
             flush()
             transport.close()
-            // Waited for here rather than in the close, so a peer that stops reading meets the idle timeout.
+            // Waited for here rather than in the close, so a peer that stops reading meets the write timeout.
             awaitSent()
         } catch (_: IOException) {
-            // The peer went away or the server stopped: nothing is left to tell anyone.
+            // The peer went away, a limit was hit or the server stopped: nothing is left to tell anyone, and nothing
+            // queued is worth waiting for, so a send still in flight is failed rather than waited out.
             out.size = 0
+            Io.shutdownAndWait()
         } finally {
             closed = true
             exchange = null
@@ -86,7 +119,7 @@ internal class Connection(private val fd: Int, private val shared: Shared) : Ses
      * which ends only this connection.
      */
     private fun handshake(): Boolean = try {
-        while (!transport.handshake()) awaitPeer(idle = true) { transport.awaitData() }
+        while (!transport.handshake()) awaitPeer(Wait.HANDSHAKE) { transport.awaitData() }
         true
     } catch (e: SSLException) {
         // Scanners, old clients and mistrusted certificates all end here; none is the server's fault.
@@ -97,6 +130,8 @@ internal class Connection(private val fd: Int, private val shared: Shared) : Ses
     private fun serve() {
         while (true) {
             val head = nextHead() ?: return
+            bodyWaited = 0L
+            bodyBytes = 0L
             val ex = UringExchange(this, head)
             exchange = ex
             invoke(ex)
@@ -136,11 +171,23 @@ internal class Connection(private val fd: Int, private val shared: Shared) : Ses
             start += blankLines(buf, start, end)
             if (start == end && (eof || stopping)) return null
             when (val parsed = parseHead(buf, start, end, config.maxRequestLineBytes, config.maxHeaderBytes)) {
-                is Parse.Complete -> return parsed.head.also { start = parsed.end }
+                is Parse.Complete -> return parsed.head.also {
+                    start = parsed.end
+                    headSince = 0L
+                }
+
                 is Parse.Refused -> return null.also { refuse(parsed.status, parsed.reason) }
-                Parse.Incomplete -> if (!fill(idle = start == end)) return null
+
+                Parse.Incomplete -> if (!fillHead()) return null
             }
         }
+    }
+
+    /** Reads more of a head, timed as idle while none of it has come, and from its first byte once some has. */
+    private fun fillHead(): Boolean {
+        val between = start == end
+        if (!between && headSince == 0L) headSince = System.nanoTime()
+        return fill(if (between) Wait.IDLE else Wait.HEAD)
     }
 
     private fun refuse(status: Int, reason: String) {
@@ -205,7 +252,7 @@ internal class Connection(private val fd: Int, private val shared: Shared) : Ses
 
     /** Reads more of a body, which has to be there: the connection ending first breaks the body. */
     fun fillBody() {
-        if (!fill(reading = exchange?.reader)) throw MalformedBodyException("The connection ended before the body did")
+        if (!fill(Wait.BODY, exchange?.reader)) throw MalformedBodyException("The connection ended before the body did")
     }
 
     /**
@@ -229,12 +276,14 @@ internal class Connection(private val fd: Int, private val shared: Shared) : Ses
      * Reads at least one more byte, parking until it arrives; false at the end of the stream. A body being read for
      * another thread ([reading]) can be failed from there, which wakes this read and ends it with that failure.
      */
-    private fun fill(idle: Boolean = false, reading: BodyReader? = null): Boolean {
+    private fun fill(wait: Int, reading: BodyReader? = null): Boolean {
         if (eof) return false
+        // Replies the client is not taking stop the reading of more requests, whatever asks for the replies.
+        relieve()
         makeRoom()
         var n = transport.readNow(buf, end, buf.size - end)
         while (n == 0) {
-            awaitPeer(idle) { transport.awaitData() }
+            awaitPeer(wait) { transport.awaitData() }
             reading?.failure?.let { throw it }
             makeRoom()
             n = transport.readNow(buf, end, buf.size - end)
@@ -243,6 +292,7 @@ internal class Connection(private val fd: Int, private val shared: Shared) : Ses
             eof = true
             return false
         }
+        val before = end
         end += n
         // Whatever else has already arrived, so pipelined requests are answered in one pass.
         while (end < buf.size) {
@@ -251,6 +301,7 @@ internal class Connection(private val fd: Int, private val shared: Shared) : Ses
             if (more <= 0) break
             end += more
         }
+        if (wait == Wait.BODY) bodyBytes += end - before
         return true
     }
 
@@ -266,6 +317,7 @@ internal class Connection(private val fd: Int, private val shared: Shared) : Ses
                 end -= start
                 start = 0
             } else {
+                if (end >= maxBuffered) throw IOException("A connection held more than $maxBuffered unread bytes")
                 buf = buf.copyOf(buf.size * 2).also { own = it }
             }
         }
@@ -287,22 +339,36 @@ internal class Connection(private val fd: Int, private val shared: Shared) : Ses
 
     /** Queues [length] bytes of [bytes] behind the replies already collected. */
     fun emit(bytes: ByteArray, offset: Int, length: Int) {
-        if (length < LARGE) return out.put(bytes, offset, length)
+        if (length < LARGE) {
+            out.put(bytes, offset, length)
+            if (out.size >= maxBuffered) flush()
+            return
+        }
         flush()
         transport.write(bytes, offset, length)
+        relieve()
     }
 
-    /** Hands what has been collected to the ring, without waiting. */
+    /**
+     * Hands what has been collected to the ring, waiting only if this connection's queued replies now pass
+     * [GannetConfig.maxBufferedBytes].
+     */
     fun flush() {
         val n = out.size
         if (n == 0) return
         // Emptied first: if the write throws, the next connection on this carrier must not send these bytes.
         out.size = 0
         transport.write(out.bytes, 0, n)
+        relieve()
+    }
+
+    /** Waits for the client to take what is queued, if that has grown past the cap: the backpressure on writes. */
+    private fun relieve() {
+        if (Io.unsent() > maxBuffered) awaitSent()
     }
 
     /** Parks until the kernel has taken everything written: a slow reader holds the writer here. */
-    fun awaitSent() = awaitPeer(idle = false) { transport.awaitSend() }
+    fun awaitSent() = awaitPeer(Wait.SEND) { transport.awaitSend() }
 
     /**
      * Hands a streamed piece on, parking only while more than [watermark] bytes are still unsent: below it the piece
@@ -311,23 +377,30 @@ internal class Connection(private val fd: Int, private val shared: Shared) : Ses
      */
     fun sendStreamed() {
         flush()
-        if (Io.unsent() > watermark) awaitPeer(idle = false) { transport.awaitSendBelow(watermark) }
+        if (Io.unsent() > watermark) awaitPeer(Wait.SEND) { transport.awaitSendBelow(watermark) }
         else Io.submitNow()
     }
 
     /** Whether the reply about to be written should close the connection after it. */
     fun closeDecided(ex: UringExchange): Boolean = stopping || ex.reader.mustClose(config.drainBytes)
 
-    private inline fun awaitPeer(idle: Boolean, wait: () -> Unit) {
+    private inline fun awaitPeer(kind: Int, wait: () -> Unit) {
         if (aborted) throw IOException("The server has stopped")
         beforePark()
-        this.idle = idle
-        waitingSince = System.nanoTime()
+        idle = kind == Wait.IDLE || kind == Wait.HANDSHAKE
+        waitingFor = kind
+        val since = System.nanoTime()
+        if (kind == Wait.SEND) {
+            sentSeen = fiber.sentBytes
+            sendStalledSince = since
+        }
+        waitingSince = since
         try {
             wait()
         } finally {
             waitingSince = 0L
-            this.idle = false
+            idle = false
+            if (kind == Wait.BODY) bodyWaited += System.nanoTime() - since
         }
         if (aborted) throw IOException("The server has stopped")
     }
@@ -343,10 +416,29 @@ internal class Connection(private val fd: Int, private val shared: Shared) : Ses
     // Both ask whether the fiber is still parked: one already made ready by an arrival is about to use the connection.
     override fun tick(now: Long) {
         val parked = fiber.waitingRecv || fiber.waitingSend
-        if (parked && waitingSince != 0L && now - waitingSince > shared.idleNanos) {
+        if (parked && waitingSince != 0L && expired(now)) {
             waitingSince = 0L
             Io.shutdown(carrier, fiber)
         }
+    }
+
+    /** Whether the wait in progress has run past its timeout at [now]. */
+    private fun expired(now: Long): Boolean = when (waitingFor) {
+        Wait.IDLE -> now - waitingSince > shared.idleNanos
+        Wait.HEAD -> now - headSince > shared.headNanos
+        Wait.HANDSHAKE -> now - accepted > shared.handshakeNanos
+        Wait.BODY -> bodyWaited + (now - waitingSince) > shared.bodyNanos + bodyBytes * shared.nanosPerBodyByte
+        else -> stalled(now)
+    }
+
+    /** Whether a send has taken nothing for longer than the write timeout. */
+    private fun stalled(now: Long): Boolean {
+        val sent = fiber.sentBytes
+        if (sent != sentSeen) {
+            sentSeen = sent
+            sendStalledSince = now
+        }
+        return now - sendStalledSince > shared.writeNanos
     }
 
     override fun stop(force: Boolean) {
@@ -365,4 +457,13 @@ internal class Connection(private val fd: Int, private val shared: Shared) : Ses
         const val LARGE = 32 * 1024
         const val MIN_OWN = 4 * 1024
     }
+}
+
+/** What a connection waits on its peer for; each has its own timeout in [GannetConfig]. */
+private object Wait {
+    const val IDLE = 0
+    const val HEAD = 1
+    const val BODY = 2
+    const val SEND = 3
+    const val HANDSHAKE = 4
 }

@@ -18,10 +18,19 @@ All notable changes to Gannet are recorded here. Gannet is experimental, and unt
 - `ResponseStream.flush`, which waits until the kernel has taken everything written so far: what `write` used to
   guarantee on every call. A new member of the interface, so a class of your own implementing `ResponseStream` needs
   it too.
+- Limits against slow and hostile clients, each a `GannetConfig` field: `headTimeout` (a head sent a byte at a time),
+  `bodyTimeout` with `minBodyRate` (a body that trickles in), `writeTimeout` (a client that stops reading; a streaming
+  handler's write then throws `IOException`), `handshakeTimeout` (TLS), `maxConnections` per server and
+  `maxHandshakes` per carrier (both stop accepting at the cap, leaving new connections in the listen backlog), and
+  `maxBufferedBytes` per connection (queued replies past it make the writer wait; unread request bytes past it close
+  the connection).
 
 ### Changed
 
-- `GannetConfig` has a new last parameter, `tls`, so its constructor and `copy` signatures changed.
+- `GannetConfig` has new last parameters, `tls` and the limits after it, and `streamHighWatermark` after
+  `heldBuffers`, so its constructor and `copy` signatures changed.
+- `idleTimeout` now covers only a connection with nothing of a request read. A head, a body, a reply and a TLS
+  handshake each have their own timeout, and a reply's counts from the client's last progress, not from the write.
 - A streamed reply's `ResponseStream.write` no longer waits for each piece's own send. It queues the piece (sent at
   once when nothing is in flight, else right behind what is) and waits only while more than the new
   `GannetConfig.streamHighWatermark` bytes (64 KiB by default) are still unsent; zero restores a wait on every write.

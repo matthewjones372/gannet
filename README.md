@@ -3,8 +3,11 @@
 > [!WARNING]
 > **Experimental. Not for production use.**
 >
-> - TLS is new and has had little scrutiny: no kernel TLS offload and no handshake-level DoS protection, and the
->   handler cannot see the client's certificate yet. A proxy that terminates TLS remains the safer choice.
+> - TLS is new and has had little scrutiny: no kernel TLS offload, and the handler cannot see the client's
+>   certificate yet. A handshake timeout and a per-carrier cap on handshakes blunt a handshake flood, but nothing
+>   limits handshakes per client address. A proxy that terminates TLS remains the safer choice.
+> - The limits below are new. They bound what one connection can hold and for how long, but there is no per-address
+>   limiting or rate limiting, and a client that reads a reply slowly but steadily is held only by the caps.
 > - HTTP/1.1 (and 1.0) only; no HTTP/2, no WebSockets.
 > - Linux 6.1 or later only, on x86-64 or arm64.
 > - It uses a JDK internal, `jdk.internal.vm.Continuation`, which the JDK may change or remove in any release.
@@ -91,7 +94,29 @@ fun main() {
 The handler runs on the carrier. Returning without answering (and without detaching) is answered with a 500; a throw
 is answered with a 413 for `BodyTooLargeException`, a 400 for `MalformedBodyException`, and a 500 otherwise. `Date`,
 `Content-Length` and chunked framing are added for you. `GannetConfig` holds the limits (request line, header and
-body sizes, idle timeout, stop grace) and the ring and buffer sizing.
+body sizes, timeouts, connection and memory caps, stop grace) and the ring and buffer sizing.
+
+### Limits
+
+One slow or hostile client cannot hold a connection, a carrier's handshake capacity or memory indefinitely. Every
+limit is a `GannetConfig` field:
+
+| Field | Default | What happens past it |
+|---|---|---|
+| `idleTimeout` | 30 s | A connection with nothing of a request read (before the first, or between keep-alive requests) is closed. |
+| `headTimeout` | 20 s | A request head not complete this long after its first byte is closed: a head sent a byte at a time (slow loris) is cut off. |
+| `bodyTimeout`, `minBodyRate` | 30 s, 1024 B/s | Time spent waiting for body bytes may reach `bodyTimeout` plus one second per `minBodyRate` bytes read; past it the connection is closed. Time the handler spends between reads does not count. |
+| `writeTimeout` | 30 s | A reply the client takes none of for this long closes the connection, and a handler writing to it gets an `IOException`. |
+| `handshakeTimeout` | 10 s | A TLS handshake not finished this long after the accept is closed. |
+| `maxConnections` | 10 000 | Connections served at once, per server. At the cap each carrier stops accepting: the connection it accepted last waits unserved, the rest wait in the listen backlog, and nothing is refused. |
+| `maxHandshakes` | 64 | TLS handshakes in progress at once, per carrier. At the cap that carrier stops accepting until one finishes. |
+| `maxBufferedBytes` | 1 MiB | Replies queued for one connection while a send is in flight: past it the writer waits for the client, under `writeTimeout`, and no more pipelined requests are read meanwhile. Unread request bytes: past it the connection is closed. |
+| `maxRequestLineBytes`, `maxHeaderBytes` | 8 KiB, 16 KiB | Answered 414 or 431, and closed. |
+| `maxBodyBytes`, `drainBytes` | unlimited, 64 KiB | A body read past `maxBodyBytes` fails with `BodyTooLargeException` (413); an unread body longer than `drainBytes` closes the connection rather than being read and dropped. |
+| `heldBuffers` | 16 | A connection holding this many unread receive buffers has its receive paused, so the kernel's window slows the sender. |
+
+The carrier checks the timeouts on each tick (`GannetConfig.tick`, 250 ms by default), so one fires up to a tick late.
+A connection closed by a limit is shut down without a reply.
 
 ### TLS
 
