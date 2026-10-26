@@ -15,6 +15,7 @@ import javax.net.ssl.SSLException
 internal class Shared(val config: GannetConfig, val handler: HttpHandler) {
     val read = ByteArray(READ_BUFFER)
     val out = Out(OUT_BUFFER)
+    val scratch = Scratch(OUT_BUFFER)
     val idleNanos = config.idleTimeout.toNanos()
     val headNanos = config.headTimeout.toNanos()
     val bodyNanos = config.bodyTimeout.toNanos()
@@ -50,6 +51,7 @@ internal class Connection(private val fd: Int, private val shared: Shared) :
     private val config = shared.config
     private val transport = shared.transport()
     val out = shared.out
+    val scratch = shared.scratch
     override val maxHeaderBytes = config.maxHeaderBytes
     val maxBodyBytes = config.maxBodyBytes
     val watermark = config.streamHighWatermark
@@ -162,6 +164,9 @@ internal class Connection(private val fd: Int, private val shared: Shared) :
     }
 
     fun log(t: Throwable) = logger.log(System.Logger.Level.WARNING, "A handler failed; answered 500", t)
+
+    fun logUnsent(t: Throwable) =
+        logger.log(System.Logger.Level.WARNING, "A reply's body writer failed; the connection is closed", t)
 
     private fun nextHead(): Head? =
         when (val parsed = nextHead(config.maxRequestLineBytes, config.maxHeaderBytes, config.maxHeaderCount)) {

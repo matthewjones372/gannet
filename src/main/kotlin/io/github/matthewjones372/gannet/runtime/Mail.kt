@@ -1,6 +1,7 @@
 package io.github.matthewjones372.gannet.runtime
 
 import java.io.IOException
+import java.io.OutputStream
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.concurrent.CompletableFuture
@@ -31,6 +32,15 @@ internal sealed class Mail(val exchange: UringExchange) {
         val body: ByteArray,
     ) : Mail(exchange) {
         override fun deliver() = exchange.writeStrict(status, headers, body)
+    }
+
+    class Written(
+        exchange: UringExchange,
+        val status: Int,
+        val headers: List<Pair<String, String>>,
+        val body: (OutputStream) -> Unit,
+    ) : Mail(exchange) {
+        override fun deliver() = exchange.writeLater(status, headers, body)
     }
 
     class Start(exchange: UringExchange, val status: Int, val headers: List<Pair<String, String>>) : Mail(exchange) {

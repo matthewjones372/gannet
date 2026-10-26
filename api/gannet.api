@@ -155,6 +155,7 @@ public abstract interface class io/github/matthewjones372/gannet/HttpExchange {
 	public abstract fun getOnCarrier ()Z
 	public abstract fun getRequest ()Lio/github/matthewjones372/gannet/HttpRequest;
 	public abstract fun offload (Ljava/util/concurrent/Executor;Lkotlin/jvm/functions/Function1;)V
+	public fun respond (ILjava/util/List;Lkotlin/jvm/functions/Function1;)V
 	public abstract fun respond (ILjava/util/List;[B)V
 	public static synthetic fun respond$default (Lio/github/matthewjones372/gannet/HttpExchange;ILjava/util/List;[BILjava/lang/Object;)V
 	public abstract fun stream (ILjava/util/List;)Lio/github/matthewjones372/gannet/ResponseStream;

@@ -8,6 +8,7 @@ import io.github.matthewjones372.gannet.MalformedBodyException
 import io.github.matthewjones372.gannet.RequestBody
 import io.github.matthewjones372.gannet.ResponseStream
 import java.io.IOException
+import java.io.OutputStream
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.Objects
@@ -51,6 +52,42 @@ internal class UringExchange(val conn: Connection, val head: Head) : HttpExchang
         if (onCarrier) writeStrict(status, headers, body) else conn.post(Mail.Strict(this, status, headers, body))
     }
 
+    override fun respond(status: Int, headers: List<Pair<String, String>>, body: (OutputStream) -> Unit) {
+        checkReply(status, headers)
+        if (onCarrier) {
+            // Written before the claim, so a throw leaves the exchange as it was, for the caller to answer.
+            check(!answered.get()) { "This exchange has already been answered" }
+            conn.scratch.fill(body)
+            claim()
+            writeScratch(status, headers)
+        } else {
+            claim()
+            conn.post(Mail.Written(this, status, headers, body))
+        }
+    }
+
+    /** [body] on the carrier, for a reply already claimed: a throw closes the connection, the reply unsent. */
+    fun writeLater(status: Int, headers: List<Pair<String, String>>, body: (OutputStream) -> Unit) {
+        try {
+            conn.scratch.fill(body)
+        } catch (e: IOException) {
+            throw e
+        } catch (@Suppress("TooGenericExceptionCaught") t: Throwable) {
+            conn.logUnsent(t)
+            throw IOException("The reply's body writer failed", t)
+        }
+        writeScratch(status, headers)
+    }
+
+    private fun writeScratch(status: Int, headers: List<Pair<String, String>>) {
+        val scratch = conn.scratch
+        try {
+            writeStrict(status, headers, scratch.bytes, scratch.size)
+        } finally {
+            scratch.release()
+        }
+    }
+
     override fun stream(status: Int, headers: List<Pair<String, String>>): ResponseStream {
         checkReply(status, headers)
         claim()
@@ -74,13 +111,13 @@ internal class UringExchange(val conn: Connection, val head: Head) : HttpExchang
 
     private fun claim() = check(answered.compareAndSet(false, true)) { "This exchange has already been answered" }
 
-    fun writeStrict(status: Int, headers: List<Pair<String, String>>, body: ByteArray) {
-        val keepLength = body.isEmpty() && (isHead || status == NOT_MODIFIED) &&
+    fun writeStrict(status: Int, headers: List<Pair<String, String>>, body: ByteArray, length: Int = body.size) {
+        val keepLength = length == 0 && (isHead || status == NOT_MODIFIED) &&
             headers.any { it.first.equals("content-length", ignoreCase = true) }
         startHead(status, headers, keepLength)
-        if (bodyAllowed(status) && !keepLength) conn.out.put("Content-Length: ${body.size}\r\n")
+        if (bodyAllowed(status) && !keepLength) conn.out.put("Content-Length: $length\r\n")
         endHead()
-        if (!isHead && bodyAllowed(status)) conn.emit(body, 0, body.size)
+        if (!isHead && bodyAllowed(status)) conn.emit(body, 0, length)
         phase = Phase.DONE
     }
 
