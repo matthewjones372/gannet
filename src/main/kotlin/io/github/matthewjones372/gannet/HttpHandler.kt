@@ -1,5 +1,7 @@
 package io.github.matthewjones372.gannet
 
+import java.io.ByteArrayOutputStream
+import java.io.OutputStream
 import java.util.concurrent.Executor
 
 /**
@@ -31,6 +33,17 @@ interface HttpExchange {
      * `Content-Length`, which is kept when [body] is empty. `Connection: close` closes the connection afterwards.
      */
     fun respond(status: Int, headers: List<Pair<String, String>> = emptyList(), body: ByteArray = EMPTY_BODY)
+
+    /**
+     * The whole reply, its body written by [body] into a buffer the carrier keeps, so it needs no array of the
+     * caller's; otherwise as the `respond` taking an array. [body] runs on the carrier, and must not block or call this
+     * exchange. Called on the carrier, [body] runs before anything is committed: a throw leaves the exchange
+     * unanswered and reaches the caller, who may still answer it. Called from another thread, the exchange is answered
+     * when this returns and [body] runs later on the carrier: a throw there closes the connection, the reply unsent,
+     * and is logged.
+     */
+    fun respond(status: Int, headers: List<Pair<String, String>>, body: (OutputStream) -> Unit) =
+        respond(status, headers, ByteArrayOutputStream().also(body).toByteArray())
 
     /**
      * Starts a reply whose body is written a piece at a time, chunked (or delimited by closing the connection, to an

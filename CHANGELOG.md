@@ -6,6 +6,13 @@ All notable changes to Gannet are recorded here. Gannet is experimental, and unt
 
 ### Added
 
+- `HttpExchange.respond(status, headers) { out -> ... }`: a whole reply whose body a writer puts into a buffer the
+  carrier keeps and reuses, so a body encoded as it is written (a JSON library's `UTF8JsonGenerator`, say) needs no
+  array of its own. On the carrier the writer runs before anything is committed, so a throw leaves the exchange for
+  the caller to answer; from another thread the exchange is answered at once and the writer runs later on the
+  carrier, where a throw closes the connection with the reply unsent. A default implementation collects the body into
+  an array, so a class of your own implementing `HttpExchange` keeps compiling.
+
 - The HTTP/1.1 server on io_uring, moved out of Pelican's `pelican-uring` module into a library of its own:
   `GannetServer`, `GannetConfig`, `GannetSupport`, `GannetUnavailableException`, and the handler API
   (`HttpHandler`, `HttpExchange`, `HttpRequest`, `Headers`, `RequestBody`, `ResponseStream`).

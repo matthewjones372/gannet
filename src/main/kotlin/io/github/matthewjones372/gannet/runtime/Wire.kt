@@ -1,8 +1,10 @@
 package io.github.matthewjones372.gannet.runtime
 
+import java.io.OutputStream
 import java.time.Instant
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
+import java.util.Objects
 
 /** Bytes on their way to a connection: replies for a whole batch of requests, written to the socket at once. */
 internal class Out(capacity: Int) {
@@ -33,6 +35,55 @@ internal class Out(capacity: Int) {
         ensure(2)
         bytes[size++] = CR
         bytes[size++] = LF
+    }
+}
+
+/**
+ * A body a writer puts together on the carrier before its head is written, shared by the carrier's connections like
+ * [Out]: it is filled and emptied without the fiber parking between.
+ */
+internal class Scratch(private val initial: Int) : OutputStream() {
+    var bytes = ByteArray(initial)
+        private set
+    var size = 0
+        private set
+
+    /** Empty, then whatever [body] writes; emptied again if it throws. */
+    fun fill(body: (OutputStream) -> Unit) {
+        size = 0
+        var written = false
+        try {
+            body(this)
+            written = true
+        } finally {
+            if (!written) release()
+        }
+    }
+
+    override fun write(b: Int) {
+        ensure(1)
+        bytes[size++] = b.toByte()
+    }
+
+    override fun write(b: ByteArray, off: Int, len: Int) {
+        Objects.checkFromIndexSize(off, len, b.size)
+        ensure(len)
+        System.arraycopy(b, off, bytes, size, len)
+        size += len
+    }
+
+    /** Emptied, and a buffer grown past [KEPT] let go, so one large body is not held by the carrier for good. */
+    fun release() {
+        size = 0
+        if (bytes.size > KEPT) bytes = ByteArray(initial)
+    }
+
+    private fun ensure(n: Int) {
+        if (size + n > bytes.size) bytes = bytes.copyOf(maxOf(bytes.size * 2, size + n))
+    }
+
+    private companion object {
+        const val KEPT = 256 * 1024
     }
 }
 

@@ -92,6 +92,11 @@ fun main() {
         when (request.path) {
             "/hello" -> exchange.respond(200, listOf("Content-Type" to "text/plain"), "hello\n".toByteArray())
 
+            // A body written straight into the carrier's buffer, as a JSON library encoding to a stream would.
+            "/written" -> exchange.respond(200, listOf("Content-Type" to "text/plain")) { out ->
+                out.write("written in place\n".toByteArray())
+            }
+
             // Reading the body parks this connection's continuation, not the carrier thread.
             "/echo" -> exchange.respond(200, body = request.body.readAll(limit = 1L shl 20))
 
