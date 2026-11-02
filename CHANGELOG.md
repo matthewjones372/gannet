@@ -4,6 +4,12 @@ All notable changes to Gannet are recorded here. Gannet is experimental, and unt
 
 ## Unreleased
 
+### Changed
+
+- A ring that `io_uring_setup` refuses for want of locked memory (ENOMEM) now says so: the message names
+  `RLIMIT_MEMLOCK`, the ring's size and roughly what it needs (about 528 KiB at the defaults), and what to change,
+  rather than `io_uring_setup failed: errno 12`. The README's requirements say the same.
+
 ### Added
 
 - `HttpExchange.respond(status, headers) { out -> ... }`: a whole reply whose body a writer puts into a buffer the

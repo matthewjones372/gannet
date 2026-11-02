@@ -54,7 +54,7 @@ final class Ring extends Engine {
             p.set(JAVA_INT, 4, completionEntries);
             p.set(JAVA_INT, 8, SETUP_CQSIZE | SETUP_SINGLE_ISSUER | SETUP_DEFER_TASKRUN);
             int r = Sys.setup(entries, p);
-            if (r < 0) throw new UnsupportedOperationException(refusal(-r));
+            if (r < 0) throw new UnsupportedOperationException(refusal(-r, entries, completionEntries));
             fd = r;
             sqEntries = p.get(JAVA_INT, 0);
             int cqEntries = p.get(JAVA_INT, 4);
@@ -90,7 +90,11 @@ final class Ring extends Engine {
         }
     }
 
-    private static String refusal(int errno) {
+    /**
+     * Why io_uring_setup refused a ring of [entries] submissions and [completionEntries] completions, and what would
+     * change the answer.
+     */
+    static String refusal(int errno, int entries, int completionEntries) {
         return switch (errno) {
             case Sys.EPERM -> "io_uring_setup was refused (EPERM): io_uring is disabled by kernel.io_uring_disabled or "
                 + "blocked by a seccomp profile, as Docker's default one does";
@@ -98,8 +102,19 @@ final class Ring extends Engine {
                 + "seccomp profile hides it";
             case 22 -> "io_uring_setup rejected its parameters (EINVAL): single-issuer deferred task work needs Linux "
                 + "6.1 or later, and the completion queue must be at least as large as the submission queue";
+            case Sys.ENOMEM -> "io_uring_setup could not lock the ring's memory (ENOMEM): without CAP_IPC_LOCK the "
+                + "kernel charges each ring to RLIMIT_MEMLOCK (ulimit -l), one budget for every process of the user, "
+                + "often 8 MiB. This ring of " + entries + " submissions and " + completionEntries + " completions "
+                + "needs about " + lockedKib(entries, completionEntries) + " KiB, and a server has one per carrier. "
+                + "Raise the limit, or lower ringEntries, completionEntries or carriers";
             default -> "io_uring_setup failed: errno " + errno;
         };
+    }
+
+    /** What a ring locks, near enough: its submission entries and index array, and its completion entries. */
+    static long lockedKib(int entries, int completionEntries) {
+        long bytes = (64L + 4L) * entries + 16L * completionEntries;
+        return (bytes + 1023) / 1024;
     }
 
     @Override

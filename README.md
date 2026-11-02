@@ -47,6 +47,12 @@ falls back to an epoll engine with the same API and features.
   ```
 
   The same string is `GannetSupport.FLAGS`. Both engines need both flags.
+- For io_uring, room under `RLIMIT_MEMLOCK` (`ulimit -l`) for every ring, unless the process holds `CAP_IPC_LOCK`.
+  The kernel charges each ring's memory to that limit, one budget shared by every process of the user and often
+  8 MiB. A carrier's ring with the default `ringEntries` and `completionEntries` takes about 528 KiB, so an
+  unprivileged process at 8 MiB fits about fifteen carriers in all, across every server it has open. Past that,
+  `io_uring_setup` fails with ENOMEM and `GannetServer.start` says so; raise the limit, or lower `ringEntries`,
+  `completionEntries` or `carriers`.
 
 `GannetSupport.problem()` returns null when this machine and JVM can run a server on some engine, and otherwise a
 message saying what stands in the way and how to fix it. `GannetServer.start` throws `GannetUnavailableException`

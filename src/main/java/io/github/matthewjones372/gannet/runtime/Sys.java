@@ -78,6 +78,7 @@ final class Sys {
 
     static final int EPERM = 1;
     static final int ENOSYS = 38;
+    static final int ENOMEM = 12;
     private static final int EADDRINUSE = 98;
 
     private static final MemorySegment ONE = Arena.global().allocate(JAVA_INT);
